@@ -10,6 +10,17 @@ export const CENTER: SplitStrategy;
 export const AVERAGE: SplitStrategy;
 export const SAH: SplitStrategy;
 
+export type SplitStrategyFn = (
+	nodeBoundingData: Float32Array,
+	centroidBoundingData: Float32Array,
+	primitiveBounds: Float32Array,
+	offset: number,
+	count: number,
+) => { axis: number; pos: number };
+
+export function registerSplitStrategy( id: SplitStrategy | number | string, strategyFn: SplitStrategyFn ): void;
+export function getSplitStrategy( id: SplitStrategy | number | string ): SplitStrategyFn | null;
+
 export enum ShapecastIntersection {}
 export const NOT_INTERSECTED: ShapecastIntersection;
 export const INTERSECTED: ShapecastIntersection;
@@ -92,6 +103,31 @@ export interface BVHCastCallbacks {
 		depth2: number,
 		index2: number
 	) => boolean
+}
+
+export class BVHNode {
+
+	boundingData: Float32Array;
+	left?: BVHNode;
+	right?: BVHNode;
+	splitAxis?: number;
+	offset?: number;
+	count?: number;
+	buffer?: ArrayBuffer;
+
+	readonly isLeaf: boolean;
+
+	getSurfaceArea(): number;
+	getBox( target: Box3 ): Box3;
+	setBounds( minx: number, miny: number, minz: number, maxx: number, maxy: number, maxz: number ): BVHNode;
+	unionWith( otherBounds: Float32Array ): BVHNode;
+	getLongestAxisIndex(): number;
+	countNodes(): number;
+
+	static isLeaf( nodeIndex16: number, uint16Array: Uint16Array ): boolean;
+	static getBoxFromBuffer( nodeIndex32: number, float32Array: Float32Array, target: Box3 ): Box3;
+	static computePrimitiveRangeBox( bvh: BVH, offset: number, count: number, target: Box3 ): Box3;
+
 }
 
 export class BVH {

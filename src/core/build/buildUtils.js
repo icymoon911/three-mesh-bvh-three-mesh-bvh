@@ -1,19 +1,12 @@
 import { BYTES_PER_NODE, IS_LEAFNODE_FLAG } from '../Constants.js';
+import { BVHNode } from '../BVHNode.js';
 
 let float32Array, uint32Array, uint16Array, uint8Array;
 const MAX_POINTER = Math.pow( 2, 32 );
 
 export function countNodes( node ) {
 
-	if ( 'count' in node ) {
-
-		return 1;
-
-	} else {
-
-		return 1 + countNodes( node.left ) + countNodes( node.right );
-
-	}
+	return node.countNodes();
 
 }
 
@@ -36,7 +29,7 @@ function _populateBuffer( byteOffset, node ) {
 
 	const node32Index = byteOffset / 4;
 	const node16Index = byteOffset / 2;
-	const isLeaf = 'count' in node;
+	const isLeaf = node.isLeaf;
 	const boundingData = node.boundingData;
 	for ( let i = 0; i < 6; i ++ ) {
 

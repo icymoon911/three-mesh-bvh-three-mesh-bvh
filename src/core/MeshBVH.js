@@ -8,19 +8,12 @@ import { ExtendedTrianglePool } from '../utils/ExtendedTrianglePool.js';
 import { closestPointToPoint } from './cast/closestPointToPoint.js';
 import { IS_LEAF } from './utils/nodeBufferUtils.js';
 
-import { iterateOverTriangles } from './utils/iterationUtils.generated.js';
-import { refit } from './cast/refit.generated.js';
-import { raycast } from './cast/raycast.generated.js';
-import { raycastFirst } from './cast/raycastFirst.generated.js';
-import { intersectsGeometry } from './cast/intersectsGeometry.generated.js';
-import { closestPointToGeometry } from './cast/closestPointToGeometry.generated.js';
-
-import { iterateOverTriangles_indirect } from './utils/iterationUtils_indirect.generated.js';
-import { refit_indirect } from './cast/refit_indirect.generated.js';
-import { raycast_indirect } from './cast/raycast_indirect.generated.js';
-import { raycastFirst_indirect } from './cast/raycastFirst_indirect.generated.js';
-import { intersectsGeometry_indirect } from './cast/intersectsGeometry_indirect.generated.js';
-import { closestPointToGeometry_indirect } from './cast/closestPointToGeometry_indirect.generated.js';
+import { iterateOverTriangles } from './utils/iterationUtils.js';
+import { refit as refitFunc } from './cast/refit.js';
+import { raycast } from './cast/raycast.js';
+import { raycastFirst } from './cast/raycastFirst.js';
+import { intersectsGeometry } from './cast/intersectsGeometry.js';
+import { closestPointToGeometry } from './cast/closestPointToGeometry.js';
 import { setTriangle } from '../utils/TriangleUtilities.js';
 import { convertRaycastIntersect } from '../utils/GeometryRayIntersectUtilities.js';
 import { GeometryBVH } from './GeometryBVH.js';
@@ -503,7 +496,6 @@ export class MeshBVH extends GeometryBVH {
 	 */
 	refit( nodeIndices = null ) {
 
-		const refitFunc = this.indirect ? refit_indirect : refit;
 		return refitFunc( this, nodeIndices );
 
 	}
@@ -533,10 +525,9 @@ export class MeshBVH extends GeometryBVH {
 
 		const roots = this._roots;
 		const intersects = [];
-		const raycastFunc = this.indirect ? raycast_indirect : raycast;
 		for ( let i = 0, l = roots.length; i < l; i ++ ) {
 
-			raycastFunc( this, i, materialOrSide, ray, intersects, near, far );
+			raycast( this, i, materialOrSide, ray, intersects, near, far );
 
 		}
 
@@ -560,10 +551,9 @@ export class MeshBVH extends GeometryBVH {
 		const roots = this._roots;
 		let closestResult = null;
 
-		const raycastFirstFunc = this.indirect ? raycastFirst_indirect : raycastFirst;
 		for ( let i = 0, l = roots.length; i < l; i ++ ) {
 
-			const result = raycastFirstFunc( this, i, materialOrSide, ray, near, far );
+			const result = raycastFirst( this, i, materialOrSide, ray, near, far );
 			if ( result != null && ( closestResult == null || result.distance < closestResult.distance ) ) {
 
 				closestResult = result;
@@ -592,10 +582,9 @@ export class MeshBVH extends GeometryBVH {
 
 		let result = false;
 		const roots = this._roots;
-		const intersectsGeometryFunc = this.indirect ? intersectsGeometry_indirect : intersectsGeometry;
 		for ( let i = 0, l = roots.length; i < l; i ++ ) {
 
-			result = intersectsGeometryFunc( this, i, otherGeometry, geomToMesh );
+			result = intersectsGeometry( this, i, otherGeometry, geomToMesh );
 
 			if ( result ) {
 
@@ -631,9 +620,7 @@ export class MeshBVH extends GeometryBVH {
 				intersectsPrimitive: callbacks.intersectsTriangle,
 				scratchPrimitive: triangle,
 
-				// TODO: is the performance significant enough for the added complexity here?
-				// can we just use one function?
-				iterate: this.indirect ? iterateOverTriangles_indirect : iterateOverTriangles,
+				iterate: iterateOverTriangles,
 			}
 		);
 		ExtendedTrianglePool.releasePrimitive( triangle );
@@ -668,35 +655,24 @@ export class MeshBVH extends GeometryBVH {
 		const triangle1 = ExtendedTrianglePool.getPrimitive();
 		const indexAttr1 = this.geometry.index;
 		const positionAttr1 = this.geometry.attributes.position;
-		const assignTriangle1 = this.indirect ?
-			i1 => {
+		const resolveIndex1 = this.resolvePrimitiveIndex;
+		const assignTriangle1 = i1 => {
 
+			const ti = resolveIndex1( i1 );
+			setTriangle( triangle1, ti * 3, indexAttr1, positionAttr1 );
 
-				const ti = this.resolveTriangleIndex( i1 );
-				setTriangle( triangle1, ti * 3, indexAttr1, positionAttr1 );
-
-			} :
-			i1 => {
-
-				setTriangle( triangle1, i1 * 3, indexAttr1, positionAttr1 );
-
-			};
+		};
 
 		const triangle2 = ExtendedTrianglePool.getPrimitive();
 		const indexAttr2 = otherBvh.geometry.index;
 		const positionAttr2 = otherBvh.geometry.attributes.position;
-		const assignTriangle2 = otherBvh.indirect ?
-			i2 => {
+		const resolveIndex2 = otherBvh.resolvePrimitiveIndex;
+		const assignTriangle2 = i2 => {
 
-				const ti2 = otherBvh.resolveTriangleIndex( i2 );
-				setTriangle( triangle2, ti2 * 3, indexAttr2, positionAttr2 );
+			const ti2 = resolveIndex2( i2 );
+			setTriangle( triangle2, ti2 * 3, indexAttr2, positionAttr2 );
 
-			} :
-			i2 => {
-
-				setTriangle( triangle2, i2 * 3, indexAttr2, positionAttr2 );
-
-			};
+		};
 
 		// generate triangle callback if needed
 		if ( intersectsTriangles ) {
@@ -839,8 +815,7 @@ export class MeshBVH extends GeometryBVH {
 	 */
 	closestPointToGeometry( otherGeometry, geometryToBvh, target1 = { }, target2 = { }, minThreshold = 0, maxThreshold = Infinity ) {
 
-		const closestPointToGeometryFunc = this.indirect ? closestPointToGeometry_indirect : closestPointToGeometry;
-		return closestPointToGeometryFunc(
+		return closestPointToGeometry(
 			this,
 			otherGeometry,
 			geometryToBvh,
