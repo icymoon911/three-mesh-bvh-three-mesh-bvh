@@ -45,6 +45,8 @@ export class GenerateMeshBVHWorker extends WorkerBase {
 	 * @param {Object} [options] - Same options accepted by the `MeshBVH` constructor.
 	 * @param {function(number): void} [options.onProgress] - Callback invoked with a `[0, 1]`
 	 *   progress value as the BVH is built.
+	 * @param {function(BuildProgressInfo): void} [options.onBuildProgress] - Callback invoked with
+	 *   detailed build progress information including current node, depth, remaining primitives, etc.
 	 * @returns {Promise<MeshBVH>}
 	 */
 
@@ -125,12 +127,28 @@ export class GenerateMeshBVHWorker extends WorkerBase {
 
 					}
 
+					if ( options.onBuildProgress && data.buildProgress ) {
+
+						options.onBuildProgress( data.buildProgress );
+
+					}
+
 					resolve( bvh );
 					worker.onmessage = null;
 
-				} else if ( options.onProgress ) {
+				} else {
 
-					options.onProgress( data.progress );
+					if ( options.onProgress ) {
+
+						options.onProgress( data.progress );
+
+					}
+
+					if ( options.onBuildProgress && data.buildProgress ) {
+
+						options.onBuildProgress( data.buildProgress );
+
+					}
 
 				}
 
@@ -152,7 +170,9 @@ export class GenerateMeshBVHWorker extends WorkerBase {
 				options: {
 					...options,
 					onProgress: null,
+					onBuildProgress: null,
 					includedProgressCallback: Boolean( options.onProgress ),
+					includedBuildProgressCallback: Boolean( options.onBuildProgress ),
 					groups: [ ... geometry.groups ],
 				},
 

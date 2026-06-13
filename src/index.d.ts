@@ -32,7 +32,31 @@ export interface BVHOptions {
 	indirect?: boolean;
 	verbose?: boolean;
 	onProgress?: ( progress: number ) => void;
+	onBuildProgress?: ( info: BuildProgressInfo ) => void;
 	range?: { start: number; count: number };
+}
+
+export interface BuildProgressInfo {
+	/** Overall progress in [0, 1]. */
+	progress: number;
+	/** Current tree depth being processed. */
+	currentDepth: number;
+	/** Sequential node index (incremented as nodes are created). */
+	nodeIndex: number;
+	/** Whether the current node is a leaf. */
+	isLeaf: boolean;
+	/** Primitive offset of the current node. */
+	primitiveOffset: number;
+	/** Number of primitives in the current node. */
+	primitiveCount: number;
+	/** Total primitives processed so far. */
+	primitivesProcessed: number;
+	/** Total number of primitives in the build range. */
+	totalPrimitives: number;
+	/** Remaining primitives to process. */
+	remainingPrimitives: number;
+	/** Total nodes created so far. */
+	totalNodes: number;
 }
 
 /** @deprecated Use BVHOptions instead */
@@ -151,6 +175,15 @@ export class MeshBVH extends GeometryBVH {
 	raycastFirst( ray: Ray, materialOrSide?: Side | Array<Material> | Material, near?: number, far?: number ): Intersection | null;
 
 	intersectsSphere( sphere: Sphere ): boolean;
+	intersectsSphere( sphere: Sphere, result: Array<number> ): boolean;
+
+	sphereCast(
+		sphere: Sphere,
+		ray: Ray,
+		near?: number,
+		far?: number,
+		intersects?: Array<number>
+	): Array<number>;
 
 	intersectsBox( box: Box3, boxToMesh: Matrix4 ): boolean;
 

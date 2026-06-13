@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three-mesh-bvh - Worker BVH Build Example</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				margin: 0;
+				background-color: #000;
+				color: #fff;
+				font-family: Monospace;
+				font-size: 13px;
+				line-height: 24px;
+				overscroll-behavior: none;
+			}
+			#output {
+				position: fixed;
+				bottom: 10px;
+				left: 10px;
+				padding: 10px;
+				background: rgba(0, 0, 0, 0.6);
+				color: #fff;
+				font-family: monospace;
+				font-size: 12px;
+				line-height: 1.5;
+				pointer-events: none;
+				text-align: left;
+				white-space: pre;
+				z-index: 10;
+			}
+			#progress-panel {
+				position: fixed;
+				top: 10px;
+				left: 10px;
+				padding: 10px;
+				background: rgba(0, 0, 0, 0.6);
+				color: #fff;
+				font-family: monospace;
+				font-size: 12px;
+				line-height: 1.5;
+				z-index: 10;
+				min-width: 260px;
+			}
+			.progress-bar {
+				width: 100%;
+				height: 12px;
+				background: #333;
+				margin-top: 4px;
+				border-radius: 2px;
+				overflow: hidden;
+			}
+			.progress-bar .fill {
+				height: 100%;
+				background: #4fc3f7;
+				transition: width 0.05s;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="output"></div>
+		<div id="progress-panel">
+			<div>Status: <span id="status">idle</span></div>
+			<div>Progress: <span id="progress-pct">0%</span></div>
+			<div class="progress-bar"><div class="fill" id="progress-fill" style="width:0%"></div></div>
+			<div>Depth: <span id="progress-depth">-</span></div>
+			<div>Node: <span id="progress-node">-</span></div>
+			<div>Remaining tris: <span id="progress-remaining">-</span></div>
+		</div>
+
+		<script type="module" src="./workerBuild.js"></script>
+	</body>
+</html>

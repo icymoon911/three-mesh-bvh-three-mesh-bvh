@@ -103,12 +103,28 @@ class _ParallelMeshBVHWorker extends WorkerBase {
 
 					}
 
+					if ( options.onBuildProgress && data.buildProgress ) {
+
+						options.onBuildProgress( data.buildProgress );
+
+					}
+
 					resolve( bvh );
 					worker.onmessage = null;
 
-				} else if ( options.onProgress ) {
+				} else {
 
-					options.onProgress( data.progress );
+					if ( options.onProgress ) {
+
+						options.onProgress( data.progress );
+
+					}
+
+					if ( options.onBuildProgress && data.buildProgress ) {
+
+						options.onBuildProgress( data.buildProgress );
+
+					}
 
 				}
 
@@ -125,7 +141,9 @@ class _ParallelMeshBVHWorker extends WorkerBase {
 				options: {
 					...options,
 					onProgress: null,
+					onBuildProgress: null,
 					includedProgressCallback: Boolean( options.onProgress ),
+					includedBuildProgressCallback: Boolean( options.onBuildProgress ),
 					groups: [ ...geometry.groups ],
 				},
 

@@ -21,9 +21,31 @@ self.onmessage = ( { data } ) => {
 				serialized: null,
 				position: null,
 				progress,
+				buildProgress: null,
 
 			} );
 			prevTime = currTime;
+
+		}
+
+	}
+
+	let prevBuildProgressTime = - 1;
+	function onBuildProgressCallback( info ) {
+
+		const currTime = performance.now();
+		if ( currTime - prevBuildProgressTime >= 10 && info.progress !== 1.0 ) {
+
+			self.postMessage( {
+
+				error: null,
+				serialized: null,
+				position: null,
+				progress: info.progress,
+				buildProgress: info,
+
+			} );
+			prevBuildProgressTime = currTime;
 
 		}
 
@@ -43,6 +65,12 @@ self.onmessage = ( { data } ) => {
 		if ( options.includedProgressCallback ) {
 
 			options.onProgress = onProgressCallback;
+
+		}
+
+		if ( options.includedBuildProgressCallback ) {
+
+			options.onBuildProgress = onBuildProgressCallback;
 
 		}
 
@@ -81,6 +109,7 @@ self.onmessage = ( { data } ) => {
 			serialized,
 			position,
 			progress: 1,
+			buildProgress: null,
 
 		}, toTransfer );
 
@@ -92,6 +121,7 @@ self.onmessage = ( { data } ) => {
 			serialized: null,
 			position: null,
 			progress: 1,
+			buildProgress: null,
 
 		} );
 

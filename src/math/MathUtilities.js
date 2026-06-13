@@ -157,6 +157,105 @@ export const closestPointsSegmentToSegment = ( function () {
 } )();
 
 
+export const capsuleIntersectTriangle = ( function () {
+
+	// Tests whether a capsule (line segment + radius) intersects a triangle.
+	// Uses closest distance between the capsule segment and the triangle.
+	const closestPointTemp = /* @__PURE__ */ new Vector3();
+	const closestPointTemp2 = /* @__PURE__ */ new Vector3();
+	const projectedPointTemp = /* @__PURE__ */ new Vector3();
+	const planeTemp = /* @__PURE__ */ new Plane();
+	const segTemp = /* @__PURE__ */ new Line3();
+	const triEdgeTemp = /* @__PURE__ */ new Line3();
+	const paramResult = /* @__PURE__ */ new Vector2();
+
+	function closestPointSegmentToSegment( l1, l2, target1, target2 ) {
+
+		closestPointLineToLine( l1, l2, paramResult );
+
+		let d = paramResult.x;
+		let d2 = paramResult.y;
+
+		d = Math.max( 0, Math.min( 1, d ) );
+		d2 = Math.max( 0, Math.min( 1, d2 ) );
+
+		l1.at( d, target1 );
+		l2.at( d2, target2 );
+
+	}
+
+	return function capsuleIntersectTriangle( segmentStart, segmentEnd, radius, triangle ) {
+
+		const { a, b, c } = triangle;
+
+		segTemp.start = segmentStart;
+		segTemp.end = segmentEnd;
+
+		// Check capsule sphere against each triangle vertex (quick early out)
+		const r2 = radius * radius;
+
+		// Check closest point on capsule segment to each triangle edge
+		triEdgeTemp.start = a;
+		triEdgeTemp.end = b;
+		closestPointSegmentToSegment( segTemp, triEdgeTemp, closestPointTemp, closestPointTemp2 );
+		if ( closestPointTemp.distanceToSquared( closestPointTemp2 ) <= r2 ) return true;
+
+		triEdgeTemp.start = b;
+		triEdgeTemp.end = c;
+		closestPointSegmentToSegment( segTemp, triEdgeTemp, closestPointTemp, closestPointTemp2 );
+		if ( closestPointTemp.distanceToSquared( closestPointTemp2 ) <= r2 ) return true;
+
+		triEdgeTemp.start = c;
+		triEdgeTemp.end = a;
+		closestPointSegmentToSegment( segTemp, triEdgeTemp, closestPointTemp, closestPointTemp2 );
+		if ( closestPointTemp.distanceToSquared( closestPointTemp2 ) <= r2 ) return true;
+
+		// Check if the capsule segment passes through the triangle plane within the triangle
+		const plane = triangle.getPlane( planeTemp );
+		const dStart = plane.distanceToPoint( segmentStart );
+		const dEnd = plane.distanceToPoint( segmentEnd );
+
+		// If segment crosses or touches the plane
+		if ( dStart * dEnd <= 0 ) {
+
+			const segLen = dStart - dEnd;
+			if ( Math.abs( segLen ) > 1e-10 ) {
+
+				const t = dStart / segLen;
+				segTemp.at( t, projectedPointTemp );
+
+			} else {
+
+				projectedPointTemp.copy( segmentStart );
+
+			}
+
+			if ( triangle.containsPoint( projectedPointTemp ) ) return true;
+
+		}
+
+		// Check closest point on triangle plane projection to segment endpoints
+		// and verify the projection falls inside the triangle
+		const projStart = plane.projectPoint( segmentStart, closestPointTemp );
+		if ( triangle.containsPoint( projStart ) ) {
+
+			if ( dStart * dStart <= r2 ) return true;
+
+		}
+
+		const projEnd = plane.projectPoint( segmentEnd, closestPointTemp2 );
+		if ( triangle.containsPoint( projEnd ) ) {
+
+			if ( dEnd * dEnd <= r2 ) return true;
+
+		}
+
+		return false;
+
+	};
+
+} )();
+
 export const sphereIntersectTriangle = ( function () {
 
 	// https://stackoverflow.com/questions/34043955/detect-collision-between-sphere-and-triangle-in-three-js

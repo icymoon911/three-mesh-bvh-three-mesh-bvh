@@ -194,6 +194,7 @@ self.onmessage = async ( { data } ) => {
 			},
 			position,
 			progress: 1,
+			buildProgress: null,
 		} );
 
 		isRunning = false;
@@ -218,6 +219,7 @@ self.onmessage = async ( { data } ) => {
 			...DEFAULT_OPTIONS,
 			...options,
 			onProgress: options.includedProgressCallback ? triggerOnProgress : null,
+			onBuildProgress: null, // detailed progress not supported in parallel sub-trees
 		};
 
 		// reconstruct the triangle bounds structure before use

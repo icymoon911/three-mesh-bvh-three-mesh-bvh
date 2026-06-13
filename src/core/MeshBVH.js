@@ -1,11 +1,12 @@
 /** @import { BufferGeometry, Sphere, Box3, Intersection, Material, Object3D, Raycaster } from 'three' */
 /** @import { ExtendedTriangle } from '../math/ExtendedTriangle.js' */
 /** @import { IntersectsBoundsCallback, IntersectsRangeCallback, BoundsTraverseOrderCallback, IntersectsRangesCallback } from './BVH.js' */
-import { BufferAttribute, FrontSide, Ray, Vector3, Matrix4 } from 'three';
+import { BufferAttribute, Box3, FrontSide, Ray, Vector3, Matrix4, Sphere, Line3 } from 'three';
 import { SKIP_GENERATION, BYTES_PER_NODE, UINT32_PER_NODE, FLOAT32_EPSILON } from './Constants.js';
 import { OrientedBox } from '../math/OrientedBox.js';
 import { ExtendedTrianglePool } from '../utils/ExtendedTrianglePool.js';
 import { closestPointToPoint } from './cast/closestPointToPoint.js';
+import { capsuleIntersectTriangle } from '../math/MathUtilities.js';
 import { IS_LEAF } from './utils/nodeBufferUtils.js';
 
 import { iterateOverTriangles } from './utils/iterationUtils.generated.js';
@@ -31,6 +32,14 @@ const _direction = /* @__PURE__ */ new Vector3();
 const _inverseMatrix = /* @__PURE__ */ new Matrix4();
 const _worldScale = /* @__PURE__ */ new Vector3();
 const _getters = [ 'getX', 'getY', 'getZ' ];
+
+// scratch objects for sphereCast
+const _capsuleStart = /* @__PURE__ */ new Vector3();
+const _capsuleEnd = /* @__PURE__ */ new Vector3();
+const _sphereCastSphere = /* @__PURE__ */ new Sphere();
+const _sphereCastBox = /* @__PURE__ */ new Box3();
+const _sphereCastRay = /* @__PURE__ */ new Ray();
+const _sphereCastPoint = /* @__PURE__ */ new Vector3();
 
 /**
  * @callback IntersectsTriangleCallback
@@ -792,19 +801,138 @@ export class MeshBVH extends GeometryBVH {
 	}
 
 	/**
-	 * Returns whether or not the mesh intersects the given sphere.
+	 * Returns whether or not the mesh intersects the given sphere. If `result` is provided,
+	 * all intersecting triangle indices are collected into the array and the function returns
+	 * `true` if any intersection was found. When `result` is omitted the traversal stops at the
+	 * first intersecting triangle (faster when only a boolean answer is needed).
 	 *
 	 * @param {Sphere} sphere
+	 * @param {Array<number>} [result=null] - Optional array to collect intersecting triangle indices.
 	 * @returns {boolean}
 	 */
-	intersectsSphere( sphere ) {
+	intersectsSphere( sphere, result = null ) {
 
+		if ( result !== null ) {
+
+			// collection mode - gather all intersecting triangle indices
+			let anyIntersection = false;
+			this.shapecast(
+				{
+					intersectsBounds: box => sphere.intersectsBox( box ),
+					intersectsTriangle: ( tri, triIndex ) => {
+
+						if ( tri.intersectsSphere( sphere ) ) {
+
+							result.push( triIndex );
+							anyIntersection = true;
+
+						}
+
+						// do not stop traversal
+					}
+				}
+			);
+
+			return anyIntersection;
+
+		}
+
+		// boolean mode (backward compatible, stops at first hit)
 		return this.shapecast(
 			{
 				intersectsBounds: box => sphere.intersectsBox( box ),
 				intersectsTriangle: tri => tri.intersectsSphere( sphere )
 			}
 		);
+
+	}
+
+	/**
+	 * Sweeps a sphere along a ray, forming a capsule shape, and returns all triangle indices
+	 * that intersect the swept volume. This is useful for collision detection where an object
+	 * with a spherical bounding volume moves along a path.
+	 *
+	 * The `ray` origin and direction define the sweep path. `near` and `far` define the start
+	 * and end distances along the ray. The sphere radius is taken from `sphere.radius`; the
+	 * sphere center is ignored (the capsule is centered on the ray).
+	 *
+	 * Returns an array of intersecting triangle indices. If `intersects` is provided the results
+	 * are appended to it.
+	 *
+	 * @param {Sphere} sphere - The sphere to sweep. Only `sphere.radius` is used.
+	 * @param {Ray} ray - The ray defining the sweep direction and origin.
+	 * @param {number} [near=0]
+	 * @param {number} [far=Infinity]
+	 * @param {Array<number>} [intersects=[]]
+	 * @returns {Array<number>}
+	 */
+	sphereCast( sphere, ray, near = 0, far = Infinity, intersects = [] ) {
+
+		const radius = sphere.radius;
+
+		// clamp far to a finite value for capsule construction
+		const effectiveFar = isFinite( far ) ? far : 1e30;
+
+		_capsuleStart.copy( ray.origin ).addScaledVector( ray.direction, near );
+		_capsuleEnd.copy( ray.origin ).addScaledVector( ray.direction, effectiveFar );
+
+		// For bounds intersection, we use a conservative test: expand the node box by radius
+		// and check if the capsule segment intersects it, or if either endpoint sphere overlaps
+		this.shapecast(
+			{
+				intersectsBounds: box => {
+
+					// expand the box by the sphere radius and test segment intersection
+					_sphereCastBox.copy( box );
+					_sphereCastBox.min.x -= radius;
+					_sphereCastBox.min.y -= radius;
+					_sphereCastBox.min.z -= radius;
+					_sphereCastBox.max.x += radius;
+					_sphereCastBox.max.y += radius;
+					_sphereCastBox.max.z += radius;
+
+					// test if the capsule segment (as a ray clamped to [near, effectiveFar])
+					// intersects the expanded box
+					_sphereCastRay.origin.copy( ray.origin );
+					_sphereCastRay.direction.copy( ray.direction );
+
+					const hit = _sphereCastRay.intersectBox( _sphereCastBox, _sphereCastPoint );
+					if ( hit !== null ) {
+
+						const d = hit.distanceTo( ray.origin );
+						if ( d <= effectiveFar + radius ) {
+
+							return true;
+
+						}
+
+					}
+
+					// also check if either endpoint sphere intersects the original box
+					_sphereCastSphere.center.copy( _capsuleStart );
+					_sphereCastSphere.radius = radius;
+					if ( _sphereCastSphere.intersectsBox( box ) ) return true;
+
+					_sphereCastSphere.center.copy( _capsuleEnd );
+					if ( _sphereCastSphere.intersectsBox( box ) ) return true;
+
+					return false;
+
+				},
+				intersectsTriangle: ( tri, triIndex ) => {
+
+					if ( capsuleIntersectTriangle( _capsuleStart, _capsuleEnd, radius, tri ) ) {
+
+						intersects.push( triIndex );
+
+					}
+
+					// do not stop traversal - collect all hits
+				}
+			}
+		);
+
+		return intersects;
 
 	}
 
