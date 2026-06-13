@@ -47,7 +47,15 @@ export function intersectsNodeBounds( nodeIndex32, array, ray, near, far ) {
 
 	}
 
-	if ( ( tmin > tymax ) || ( tymin > tmax ) ) return false;
+	// Apply a relative epsilon to the slab comparisons to avoid missing
+	// intersections when the ray is nearly parallel to a bounding box face.
+	// Without this tolerance, floating-point rounding can cause tmin to
+	// exceed tmax (or tymin/tzmin to exceed tmax) by a tiny amount even
+	// when the ray genuinely intersects the box.
+	const eps_tmax = Math.max( Math.abs( tmax ), 1.0 ) * 1e-7;
+	const eps_tymax = Math.max( Math.abs( tymax ), 1.0 ) * 1e-7;
+
+	if ( ( tmin > tymax + eps_tymax ) || ( tymin > tmax + eps_tmax ) ) return false;
 
 	if ( tymin > tmin || isNaN( tmin ) ) tmin = tymin;
 
@@ -65,7 +73,9 @@ export function intersectsNodeBounds( nodeIndex32, array, ray, near, far ) {
 
 	}
 
-	if ( ( tmin > tzmax ) || ( tzmin > tmax ) ) return false;
+	const eps_tzmax = Math.max( Math.abs( tzmax ), 1.0 ) * 1e-7;
+
+	if ( ( tmin > tzmax + eps_tzmax ) || ( tzmin > tmax + eps_tmax ) ) return false;
 
 	if ( tzmin > tmin || tmin !== tmin ) tmin = tzmin;
 

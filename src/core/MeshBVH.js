@@ -186,12 +186,12 @@ export class MeshBVH extends GeometryBVH {
 		if ( options.setIndex ) {
 
 			const indexAttribute = geometry.getIndex();
-			if ( indexAttribute === null ) {
+			if ( indexAttribute === null && data.index !== null ) {
 
 				const newIndex = new BufferAttribute( data.index, 1, false );
 				geometry.setIndex( newIndex );
 
-			} else if ( indexAttribute.array !== index ) {
+			} else if ( indexAttribute !== null && data.index !== null && indexAttribute.array !== index ) {
 
 				indexAttribute.array.set( index );
 				indexAttribute.needsUpdate = true;

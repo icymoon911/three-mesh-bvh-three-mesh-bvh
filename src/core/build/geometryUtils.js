@@ -8,7 +8,7 @@ export function getVertexCount( geo ) {
 
 export function getTriCount( geo ) {
 
-	return getVertexCount( geo ) / 3;
+	return Math.floor( getVertexCount( geo ) / 3 );
 
 }
 
@@ -33,10 +33,18 @@ export function ensureIndex( geo, options ) {
 
 		const vertexCount = geo.attributes.position.count;
 		const BufferConstructor = options.useSharedArrayBuffer ? SharedArrayBuffer : ArrayBuffer;
-		const index = getIndexArray( vertexCount, BufferConstructor );
+
+		// Only include complete triangles in the generated index. When the vertex
+		// count is not a multiple of 3 the trailing 1-2 vertices cannot form a
+		// valid triangle and would lead to out-of-bounds access or degenerate
+		// primitives during BVH construction and spatial queries.
+		const triangleCount = Math.floor( vertexCount / 3 );
+		const indexVertexCount = triangleCount * 3;
+
+		const index = getIndexArray( indexVertexCount, BufferConstructor );
 		geo.setIndex( new BufferAttribute( index, 1 ) );
 
-		for ( let i = 0; i < vertexCount; i ++ ) {
+		for ( let i = 0; i < indexVertexCount; i ++ ) {
 
 			index[ i ] = i;
 
@@ -59,7 +67,7 @@ export function ensureIndex( geo, options ) {
 // we would need four BVH roots: [0, 15], [16, 20], [21, 40], [41, 60].
 function getFullPrimitiveRange( geo, range, stride ) {
 
-	const primitiveCount = getVertexCount( geo ) / stride;
+	const primitiveCount = Math.floor( getVertexCount( geo ) / stride );
 	const drawRange = range ? range : geo.drawRange;
 	const start = drawRange.start / stride;
 	const end = ( drawRange.start + drawRange.count ) / stride;
@@ -76,8 +84,8 @@ function getFullPrimitiveRange( geo, range, stride ) {
 function getPrimitiveGroupRanges( geo, stride ) {
 
 	return geo.groups.map( group => ( {
-		offset: group.start / stride,
-		count: group.count / stride,
+		offset: Math.floor( group.start / stride ),
+		count: Math.floor( group.count / stride ),
 	} ));
 
 }
@@ -99,7 +107,7 @@ export function getRootPrimitiveRanges( geo, range, stride ) {
 	const drawRangeEnd = drawRange.offset + drawRange.count;
 
 	// Create events for group boundaries
-	const primitiveCount = getVertexCount( geo ) / stride;
+	const primitiveCount = Math.floor( getVertexCount( geo ) / stride );
 	const events = [];
 	for ( const group of primitiveRanges ) {
 
@@ -107,7 +115,7 @@ export function getRootPrimitiveRanges( geo, range, stride ) {
 		const { offset, count } = group;
 		const groupStart = offset;
 		const groupCount = isFinite( count ) ? count : ( primitiveCount - offset );
-		const groupEnd = ( offset + groupCount );
+		const groupEnd = Math.floor( offset + groupCount );
 
 		// Only add events if the group intersects with the draw range
 		if ( groupStart < drawRangeEnd && groupEnd > drawRangeStart ) {
@@ -128,7 +136,9 @@ export function getRootPrimitiveRanges( geo, range, stride ) {
 
 		} else {
 
-			return a.type === 'end' ? - 1 : 1;
+			// end events (isStart === false) should come before start events at the
+			// same position to avoid creating zero-width ranges at group boundaries
+			return ( a.isStart === false ? - 1 : 1 ) - ( b.isStart === false ? - 1 : 1 );
 
 		}
 

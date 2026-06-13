@@ -1,4 +1,4 @@
-import { BYTES_PER_NODE, UINT32_PER_NODE } from '../Constants.js';
+import { BYTES_PER_NODE, UINT32_PER_NODE, FLOAT32_EPSILON } from '../Constants.js';
 import { COUNT, IS_LEAF, LEFT_NODE, OFFSET, RIGHT_NODE } from '../utils/nodeBufferUtils.js';
 
 export function refit/* @echo INDIRECT_STRING */( bvh, nodeIndices = null ) {
@@ -75,7 +75,7 @@ export function refit/* @echo INDIRECT_STRING */( bvh, nodeIndices = null ) {
 
 			for ( let i = 3 * offset, l = 3 * ( offset + count ); i < l; i ++ ) {
 
-				let index = indexArr[ i ];
+				let index = indexArr ? indexArr[ i ] : i;
 				const x = posAttr.getX( index );
 				const y = posAttr.getY( index );
 				const z = posAttr.getZ( index );
@@ -92,6 +92,24 @@ export function refit/* @echo INDIRECT_STRING */( bvh, nodeIndices = null ) {
 			}
 
 			/* @endif */
+
+			// Apply epsilon padding to match the bounds expansion applied during
+			// initial BVH construction.  Without this padding, floating-point
+			// precision errors at bounding box boundaries can cause raycast and
+			// shapecast queries to miss geometry that lies exactly on a node bound.
+			const padMinx = Math.abs( minx ) * FLOAT32_EPSILON;
+			const padMiny = Math.abs( miny ) * FLOAT32_EPSILON;
+			const padMinz = Math.abs( minz ) * FLOAT32_EPSILON;
+			const padMaxx = Math.abs( maxx ) * FLOAT32_EPSILON;
+			const padMaxy = Math.abs( maxy ) * FLOAT32_EPSILON;
+			const padMaxz = Math.abs( maxz ) * FLOAT32_EPSILON;
+
+			minx -= padMinx;
+			miny -= padMiny;
+			minz -= padMinz;
+			maxx += padMaxx;
+			maxy += padMaxy;
+			maxz += padMaxz;
 
 			if (
 				float32Array[ nodeIndex32 + 0 ] !== minx ||
