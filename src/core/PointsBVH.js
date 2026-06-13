@@ -73,19 +73,12 @@ export class PointsBVH extends GeometryBVH {
 	 */
 	shapecast( callbacks ) {
 
-		// TODO: avoid unnecessary "iterate over points" function
-		const point = _pointPool.getPrimitive();
-		const result = super.shapecast(
-			{
-				...callbacks,
-				intersectsPrimitive: callbacks.intersectsPoint,
-				scratchPrimitive: point,
-				iterate: iterateOverPoints,
-			},
+		return this.primitiveShapecast(
+			callbacks,
+			callbacks.intersectsPoint,
+			_pointPool,
+			iterateOverPoints,
 		);
-
-		_pointPool.releasePrimitive( point );
-		return result;
 
 	}
 

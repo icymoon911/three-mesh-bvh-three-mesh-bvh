@@ -119,6 +119,38 @@ export class BVH {
 
 }
 
+export class BVHNode {
+
+	boundingData: Float32Array;
+
+	readonly isLeaf: boolean;
+
+	getBox( target?: Box3 ): Box3;
+	getCenter( target?: Vector3 ): Vector3;
+	getSize( target?: Vector3 ): Vector3;
+	getLongestAxis(): number;
+	surfaceArea(): number;
+	containsPoint( point: Vector3 ): boolean;
+	intersectsBox( box: Box3 ): boolean;
+	union( other: BVHNode ): BVHNode;
+	setBounds( minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number ): BVHNode;
+	distanceSqToPoint( point: Vector3 ): number;
+
+}
+
+export type SplitStrategyFunction = (
+	nodeBoundingData: Float32Array,
+	centroidBoundingData: Float32Array,
+	primitiveBounds: Float32Array,
+	offset: number,
+	count: number,
+) => { axis: number; pos: number };
+
+export const splitStrategies: Map<number | string, SplitStrategyFunction>;
+export const centerSplit: SplitStrategyFunction;
+export const averageSplit: SplitStrategyFunction;
+export const sahSplit: SplitStrategyFunction;
+
 export class GeometryBVH extends BVH {
 
 	readonly indirect: boolean;
@@ -126,6 +158,13 @@ export class GeometryBVH extends BVH {
 
 	constructor( geometry: BufferGeometry, options?: BVHOptions );
 	raycastObject3D( object: Object3D, raycaster: Raycaster, intersects: Array<Intersection> ): void;
+
+	protected primitiveShapecast(
+		callbacks: Object,
+		intersectsPrimitive: Function,
+		pool: { getPrimitive(): Object; releasePrimitive( primitive: Object ): void },
+		iterate: Function,
+	): boolean;
 
 }
 

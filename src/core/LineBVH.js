@@ -86,16 +86,12 @@ export class LineSegmentsBVH extends GeometryBVH {
 	 */
 	shapecast( callbacks ) {
 
-		const line = _linePool.getPrimitive();
-		const result = super.shapecast( {
-			...callbacks,
-			intersectsPrimitive: callbacks.intersectsLine,
-			scratchPrimitive: line,
-			iterate: iterateOverLines,
-		} );
-		_linePool.releasePrimitive( line );
-
-		return result;
+		return this.primitiveShapecast(
+			callbacks,
+			callbacks.intersectsLine,
+			_linePool,
+			iterateOverLines,
+		);
 
 	}
 

@@ -10,7 +10,6 @@ export default [
 	{
 		name: 'files to ignore',
 		ignores: [
-			'**/*.generated.js',
 			'**/node_modules/**',
 			'**/build/**',
 		],

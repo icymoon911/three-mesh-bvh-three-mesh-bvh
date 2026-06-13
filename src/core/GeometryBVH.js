@@ -186,4 +186,45 @@ export class GeometryBVH extends BVH {
 
 	}
 
+	/**
+	 * Helper for subclass `shapecast` implementations. Handles the common pattern of
+	 * acquiring a scratch primitive from a pool, delegating to the base `shapecast`, and
+	 * releasing the primitive back to the pool.
+	 *
+	 * Subclasses override `shapecast` and call this helper with their primitive-specific
+	 * configuration:
+	 *
+	 * ```js
+	 * shapecast( callbacks ) {
+	 *   return this.primitiveShapecast(
+	 *     callbacks,
+	 *     callbacks.intersectsTriangle,
+	 *     trianglePool,
+	 *     iterateOverTriangles,
+	 *   );
+	 * }
+	 * ```
+	 *
+	 * @param {Object} callbacks - The original callbacks object from the caller.
+	 * @param {Function} intersectsPrimitive - The primitive-specific intersection callback
+	 *   extracted from `callbacks` (e.g. `callbacks.intersectsTriangle`).
+	 * @param {{ getPrimitive(): Object, releasePrimitive( primitive: Object ): void }} pool
+	 *   - Pool used to acquire and release the scratch primitive.
+	 * @param {Function} iterate - The leaf-iteration function for this primitive type.
+	 * @returns {boolean}
+	 */
+	primitiveShapecast( callbacks, intersectsPrimitive, pool, iterate ) {
+
+		const primitive = pool.getPrimitive();
+		const result = super.shapecast( {
+			...callbacks,
+			intersectsPrimitive: intersectsPrimitive,
+			scratchPrimitive: primitive,
+			iterate: iterate,
+		} );
+		pool.releasePrimitive( primitive );
+		return result;
+
+	}
+
 }

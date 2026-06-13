@@ -63,6 +63,4 @@ typings/
 example/dev-bundle
 .parcel-cache
 
-*.generated.js
-
 build/**
