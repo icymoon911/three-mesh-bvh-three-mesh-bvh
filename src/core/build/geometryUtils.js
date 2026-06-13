@@ -32,11 +32,15 @@ export function ensureIndex( geo, options ) {
 	if ( ! geo.index ) {
 
 		const vertexCount = geo.attributes.position.count;
+		// Only create index entries for complete triangles. When the vertex count
+		// is not a multiple of 3 the trailing vertices do not form a full triangle
+		// and must be excluded to prevent out-of-bounds access during build.
+		const triVertexCount = vertexCount - ( vertexCount % 3 );
 		const BufferConstructor = options.useSharedArrayBuffer ? SharedArrayBuffer : ArrayBuffer;
-		const index = getIndexArray( vertexCount, BufferConstructor );
+		const index = getIndexArray( triVertexCount, BufferConstructor );
 		geo.setIndex( new BufferAttribute( index, 1 ) );
 
-		for ( let i = 0; i < vertexCount; i ++ ) {
+		for ( let i = 0; i < triVertexCount; i ++ ) {
 
 			index[ i ] = i;
 
@@ -64,11 +68,16 @@ function getFullPrimitiveRange( geo, range, stride ) {
 	const start = drawRange.start / stride;
 	const end = ( drawRange.start + drawRange.count ) / stride;
 
-	const offset = Math.max( 0, start );
-	const count = Math.min( primitiveCount, end ) - offset;
+	// Ceil the offset so we never include a partial primitive at the start of
+	// the draw range, and floor the end so we never include a partial primitive
+	// at the end.  Clamp count to zero when the draw range is empty or falls
+	// entirely outside the geometry.
+	const offset = Math.ceil( Math.max( 0, start ) );
+	const clampedEnd = Math.floor( Math.min( primitiveCount, end ) );
+	const count = Math.max( 0, clampedEnd - offset );
 	return {
-		offset: Math.floor( offset ),
-		count: Math.floor( count ),
+		offset: offset,
+		count: count,
 	};
 
 }
@@ -128,7 +137,7 @@ export function getRootPrimitiveRanges( geo, range, stride ) {
 
 		} else {
 
-			return a.type === 'end' ? - 1 : 1;
+			return a.isStart ? 1 : - 1;
 
 		}
 

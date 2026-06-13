@@ -292,6 +292,18 @@ export class BVH {
 					const count = COUNT( nodeIndex16, uint16Array );
 					this.writePrimitiveRangeBounds( offset, count, _tempBuffer, 0 );
 
+					// Apply epsilon padding to match the bounds expansion applied
+					// during initial BVH construction so queries do not miss
+					// geometry at node boundaries after refit.
+					for ( let i = 0; i < 3; i ++ ) {
+
+						const minVal = _tempBuffer[ i ];
+						const maxVal = _tempBuffer[ i + 3 ];
+						_tempBuffer[ i ] = minVal - Math.abs( minVal ) * FLOAT32_EPSILON;
+						_tempBuffer[ i + 3 ] = maxVal + Math.abs( maxVal ) * FLOAT32_EPSILON;
+
+					}
+
 					// write directly to node bounds (already in min/max format)
 					float32Array.set( _tempBuffer, nodeIndex32 );
 

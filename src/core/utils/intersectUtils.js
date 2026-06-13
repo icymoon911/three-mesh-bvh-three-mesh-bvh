@@ -1,4 +1,10 @@
 
+// Small tolerance applied to ray–box slab tests to avoid false negatives when
+// the ray is nearly parallel to a bounding-box face.  Without this epsilon the
+// floating-point products (min - origin) * invdir and (max - origin) * invdir
+// can disagree by a tiny amount and cause a valid intersection to be rejected.
+const RAY_BOX_EPSILON = 1e-10;
+
 export function intersectsNodeBounds( nodeIndex32, array, ray, near, far ) {
 
 	// This function performs intersection tests similar to Ray.intersectBox in three.js,
@@ -47,7 +53,7 @@ export function intersectsNodeBounds( nodeIndex32, array, ray, near, far ) {
 
 	}
 
-	if ( ( tmin > tymax ) || ( tymin > tmax ) ) return false;
+	if ( ( tmin > tymax + RAY_BOX_EPSILON ) || ( tymin > tmax + RAY_BOX_EPSILON ) ) return false;
 
 	if ( tymin > tmin || isNaN( tmin ) ) tmin = tymin;
 
@@ -65,7 +71,7 @@ export function intersectsNodeBounds( nodeIndex32, array, ray, near, far ) {
 
 	}
 
-	if ( ( tmin > tzmax ) || ( tzmin > tmax ) ) return false;
+	if ( ( tmin > tzmax + RAY_BOX_EPSILON ) || ( tzmin > tmax + RAY_BOX_EPSILON ) ) return false;
 
 	if ( tzmin > tmin || tmin !== tmin ) tmin = tzmin;
 

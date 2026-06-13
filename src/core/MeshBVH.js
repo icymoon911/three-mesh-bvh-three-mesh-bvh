@@ -188,10 +188,18 @@ export class MeshBVH extends GeometryBVH {
 			const indexAttribute = geometry.getIndex();
 			if ( indexAttribute === null ) {
 
-				const newIndex = new BufferAttribute( data.index, 1, false );
-				geometry.setIndex( newIndex );
+				// Only set a new index when serialized data actually contains an
+				// index buffer.  In indirect mode with a non-indexed source
+				// geometry, `data.index` is null and creating a BufferAttribute
+				// from null would corrupt the geometry.
+				if ( data.index !== null ) {
 
-			} else if ( indexAttribute.array !== index ) {
+					const newIndex = new BufferAttribute( data.index, 1, false );
+					geometry.setIndex( newIndex );
+
+				}
+
+			} else if ( indexAttribute.array !== index && index !== null ) {
 
 				indexAttribute.array.set( index );
 				indexAttribute.needsUpdate = true;
