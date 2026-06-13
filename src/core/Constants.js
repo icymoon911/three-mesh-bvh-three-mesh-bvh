@@ -72,6 +72,7 @@ export const DEFAULT_OPTIONS = {
 	useSharedArrayBuffer: false,
 	setBoundingBox: true,
 	onProgress: null,
+	onDetailedProgress: null,
 	indirect: false,
 	verbose: true,
 	range: null,

@@ -265,10 +265,32 @@ constructor(
 		indirect = false: boolean,
 		verbose = true: boolean,
 		onProgress = null: function | null,
+		onDetailedProgress = null: function | null,
 		range = null: Object | null,
 	}
 )
 ```
+
+#### Construction Options
+
+- `strategy` — Split strategy (`CENTER`, `AVERAGE`, or `SAH`).
+- `maxDepth` — Maximum tree depth.
+- `maxLeafSize` — Maximum primitives per leaf node.
+- `setBoundingBox` — Set `geometry.boundingBox` if not already present.
+- `useSharedArrayBuffer` — Use `SharedArrayBuffer` for BVH buffers.
+- `indirect` — Build using an indirect buffer, preserving the original index.
+- `verbose` — Log build warnings to console.
+- `onProgress` — Callback receiving a progress value in `[0, 1]` as the BVH is built.
+- `onDetailedProgress` — Callback receiving detailed progress info including:
+  - `progress: number` — Progress in `[0, 1]`.
+  - `nodeIndex: number` — Current node being processed.
+  - `depth: number` — Current tree depth.
+  - `isLeaf: boolean` — Whether this is a leaf node.
+  - `primitiveCount: number` — Number of primitives in this node.
+  - `processedPrimitives: number` — Total primitives processed so far.
+  - `totalPrimitives: number` — Total primitives to process.
+  - `nodeCount: number` — Total nodes created so far.
+- `range` — Restrict the BVH to a specific geometry group range.
 
 ## LineSegmentsBVH
 
@@ -606,6 +628,61 @@ intersectsSphere( sphere: Sphere ): boolean
 ```
 
 Returns whether or not the mesh intersects the given sphere.
+
+
+### .collectIntersectingTriangles
+
+```js
+collectIntersectingTriangles( sphere: Sphere, results: Array<number> = [] ): Array<number>
+```
+
+Collects all triangle indices that intersect the given sphere. This is useful for collision
+detection where you need to know exactly which triangles are affected by a sphere-shaped query volume.
+
+The sphere is expected to be in the local space of the BVH.
+
+`results` is an optional array to append results to. If not provided, a new array is created.
+Returns an array of triangle indices that intersect the sphere.
+
+Supports both direct and indirect BVH modes. When using indirect mode, the returned indices
+are geometry triangle indices (not BVH layout indices).
+
+
+### .sphereCast
+
+```js
+sphereCast(
+	sphere: Sphere,
+	ray: Ray,
+	near: number = 0,
+	far: number = Infinity,
+	results: Array<SphereCastHit> = []
+): Array<SphereCastHit>
+```
+
+Performs a sphere-sweep (sphere cast) along a ray and returns all triangles that intersect
+the swept volume (capsule shape). This is useful for character movement collision detection
+where a spherical character moves along a path.
+
+The ray and sphere are expected to be in the local space of the BVH.
+
+- `sphere` — The sphere to sweep along the ray. The radius determines the sweep thickness.
+- `ray` — The ray direction and origin for the sweep.
+- `near` — Near distance limit for the sweep.
+- `far` — Far distance limit for the sweep.
+- `results` — Optional array to append results to.
+
+Returns an array of `SphereCastHit` objects with the following properties:
+
+```js
+interface SphereCastHit {
+	triangleIndex: number;  // Index of the intersected triangle
+	distance: number;       // Approximate distance from ray origin to triangle
+	point: Vector3;         // Approximate hit point (center of triangle)
+}
+```
+
+Supports both direct and indirect BVH modes.
 
 
 ### .closestPointToGeometry

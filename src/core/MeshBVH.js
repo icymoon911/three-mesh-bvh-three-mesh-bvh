@@ -1,7 +1,7 @@
 /** @import { BufferGeometry, Sphere, Box3, Intersection, Material, Object3D, Raycaster } from 'three' */
 /** @import { ExtendedTriangle } from '../math/ExtendedTriangle.js' */
 /** @import { IntersectsBoundsCallback, IntersectsRangeCallback, BoundsTraverseOrderCallback, IntersectsRangesCallback } from './BVH.js' */
-import { BufferAttribute, FrontSide, Ray, Vector3, Matrix4 } from 'three';
+import { BufferAttribute, FrontSide, Ray, Vector3, Matrix4, Sphere } from 'three';
 import { SKIP_GENERATION, BYTES_PER_NODE, UINT32_PER_NODE, FLOAT32_EPSILON } from './Constants.js';
 import { OrientedBox } from '../math/OrientedBox.js';
 import { ExtendedTrianglePool } from '../utils/ExtendedTrianglePool.js';
@@ -14,6 +14,8 @@ import { raycast } from './cast/raycast.generated.js';
 import { raycastFirst } from './cast/raycastFirst.generated.js';
 import { intersectsGeometry } from './cast/intersectsGeometry.generated.js';
 import { closestPointToGeometry } from './cast/closestPointToGeometry.generated.js';
+import { collectIntersectingTriangles } from './cast/collectIntersectingTriangles.generated.js';
+import { sphereCast } from './cast/sphereCast.generated.js';
 
 import { iterateOverTriangles_indirect } from './utils/iterationUtils_indirect.generated.js';
 import { refit_indirect } from './cast/refit_indirect.generated.js';
@@ -21,6 +23,8 @@ import { raycast_indirect } from './cast/raycast_indirect.generated.js';
 import { raycastFirst_indirect } from './cast/raycastFirst_indirect.generated.js';
 import { intersectsGeometry_indirect } from './cast/intersectsGeometry_indirect.generated.js';
 import { closestPointToGeometry_indirect } from './cast/closestPointToGeometry_indirect.generated.js';
+import { collectIntersectingTriangles_indirect } from './cast/collectIntersectingTriangles_indirect.generated.js';
+import { sphereCast_indirect } from './cast/sphereCast_indirect.generated.js';
 import { setTriangle } from '../utils/TriangleUtilities.js';
 import { convertRaycastIntersect } from '../utils/GeometryRayIntersectUtilities.js';
 import { GeometryBVH } from './GeometryBVH.js';
@@ -72,6 +76,16 @@ const _getters = [ 'getX', 'getY', 'getZ' ];
  * @property {number} distance - Distance from the query point to the closest point.
  * @property {number} faceIndex - Index of the triangle containing the closest point. Can be
  *   passed to `getTriangleHitPointInfo` to retrieve UV, normal, and material index.
+ */
+
+/**
+ * Result of a sphere cast intersection.
+ *
+ * @typedef {Object} SphereCastHit
+ * @property {number} triangleIndex - Index of the intersected triangle. Use with
+ *   `resolveTriangleIndex` if the BVH uses indirect mode.
+ * @property {number} distance - Approximate distance from the ray origin to the triangle.
+ * @property {Vector3} point - Approximate hit point (center of the intersected triangle).
  */
 
 /**
@@ -805,6 +819,62 @@ export class MeshBVH extends GeometryBVH {
 				intersectsTriangle: tri => tri.intersectsSphere( sphere )
 			}
 		);
+
+	}
+
+	/**
+	 * Collects all triangle indices that intersect the given sphere. This is useful for
+	 * collision detection where you need to know exactly which triangles are affected by
+	 * a sphere-shaped query volume.
+	 *
+	 * The sphere is expected to be in the local space of the BVH.
+	 *
+	 * @param {Sphere} sphere - The query sphere.
+	 * @param {Array<number>} [results=[]] - Optional array to append results to. If not
+	 *   provided, a new array is created.
+	 * @returns {Array<number>} Array of triangle indices that intersect the sphere.
+	 */
+	collectIntersectingTriangles( sphere, results = [] ) {
+
+		const roots = this._roots;
+		const collectFunc = this.indirect ? collectIntersectingTriangles_indirect : collectIntersectingTriangles;
+		for ( let i = 0, l = roots.length; i < l; i ++ ) {
+
+			collectFunc( this, i, sphere, results );
+
+		}
+
+		return results;
+
+	}
+
+	/**
+	 * Performs a sphere-sweep (sphere cast) along a ray and returns all triangles that
+	 * intersect the swept volume (capsule shape). This is useful for character movement
+	 * collision detection where a spherical character moves along a path.
+	 *
+	 * The ray and sphere are expected to be in the local space of the BVH.
+	 *
+	 * @param {Sphere} sphere - The sphere to sweep along the ray. The radius determines
+	 *   the sweep thickness.
+	 * @param {Ray} ray - The ray direction and origin for the sweep.
+	 * @param {number} [near=0] - Near distance limit for the sweep.
+	 * @param {number} [far=Infinity] - Far distance limit for the sweep.
+	 * @param {Array<Object>} [results=[]] - Optional array to append results to.
+	 * @returns {Array<SphereCastHit>} Array of hit objects with `triangleIndex`, `distance`,
+	 *   and `point` properties.
+	 */
+	sphereCast( sphere, ray, near = 0, far = Infinity, results = [] ) {
+
+		const roots = this._roots;
+		const sphereCastFunc = this.indirect ? sphereCast_indirect : sphereCast;
+		for ( let i = 0, l = roots.length; i < l; i ++ ) {
+
+			sphereCastFunc( this, i, sphere, ray, near, far, results );
+
+		}
+
+		return results;
 
 	}
 

@@ -15,6 +15,7 @@ export function buildTree( bvh, primitiveBounds, offset, count, options, loadRan
 		maxLeafSize,
 		strategy,
 		onProgress,
+		onDetailedProgress,
 	} = options;
 
 	const partitionBuffer = bvh.primitiveBuffer;
@@ -23,17 +24,37 @@ export function buildTree( bvh, primitiveBounds, offset, count, options, loadRan
 	// generate intermediate variables
 	const cacheCentroidBoundingData = new Float32Array( 6 );
 	let reachedMaxDepth = false;
+	let nodeCount = 0;
+	let processedPrimitives = 0;
 
 	const root = new BVHNode();
 	getBounds( primitiveBounds, offset, count, root.boundingData, cacheCentroidBoundingData );
 	splitNode( root, offset, count, cacheCentroidBoundingData );
 	return root;
 
-	function triggerProgress( primitivesProcessed ) {
+	function triggerProgress( primitivesProcessed, nodeIndex, depth, isLeaf, primitiveCount ) {
+
+		processedPrimitives = primitivesProcessed - loadRange.offset;
+		nodeCount ++;
+
+		if ( onDetailedProgress ) {
+
+			onDetailedProgress( {
+				progress: processedPrimitives / loadRange.count,
+				nodeIndex: nodeIndex,
+				depth: depth,
+				isLeaf: isLeaf,
+				primitiveCount: primitiveCount,
+				processedPrimitives: processedPrimitives,
+				totalPrimitives: loadRange.count,
+				nodeCount: nodeCount,
+			} );
+
+		}
 
 		if ( onProgress ) {
 
-			onProgress( ( primitivesProcessed - loadRange.offset ) / loadRange.count );
+			onProgress( processedPrimitives / loadRange.count );
 
 		}
 
@@ -42,6 +63,8 @@ export function buildTree( bvh, primitiveBounds, offset, count, options, loadRan
 	// either recursively splits the given node, creating left and right subtrees for it, or makes it a leaf node,
 	// recording the offset and count of its primitives and writing them into the reordered geometry index.
 	function splitNode( node, offset, count, centroidBoundingData = null, depth = 0 ) {
+
+		const currentNodeIndex = nodeCount;
 
 		if ( ! reachedMaxDepth && depth >= maxDepth ) {
 
@@ -57,7 +80,7 @@ export function buildTree( bvh, primitiveBounds, offset, count, options, loadRan
 		// early out if we've met our capacity
 		if ( count <= maxLeafSize || depth >= maxDepth ) {
 
-			triggerProgress( offset + count );
+			triggerProgress( offset + count, currentNodeIndex, depth, true, count );
 			node.offset = offset;
 			node.count = count;
 			return node;
@@ -68,7 +91,7 @@ export function buildTree( bvh, primitiveBounds, offset, count, options, loadRan
 		const split = getOptimalSplit( node.boundingData, centroidBoundingData, primitiveBounds, offset, count, strategy );
 		if ( split.axis === - 1 ) {
 
-			triggerProgress( offset + count );
+			triggerProgress( offset + count, currentNodeIndex, depth, true, count );
 			node.offset = offset;
 			node.count = count;
 			return node;
@@ -80,11 +103,14 @@ export function buildTree( bvh, primitiveBounds, offset, count, options, loadRan
 		// create the two new child nodes
 		if ( splitOffset === offset || splitOffset === offset + count ) {
 
-			triggerProgress( offset + count );
+			triggerProgress( offset + count, currentNodeIndex, depth, true, count );
 			node.offset = offset;
 			node.count = count;
 
 		} else {
+
+			// Trigger progress for internal node
+			triggerProgress( processedPrimitives + loadRange.offset, currentNodeIndex, depth, false, count );
 
 			node.splitAxis = split.axis;
 

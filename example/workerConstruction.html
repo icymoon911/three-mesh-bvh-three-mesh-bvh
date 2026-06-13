@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three-mesh-bvh - Worker BVH Construction</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				margin: 0;
+				background-color: #000;
+				color: #fff;
+				font-family: Monospace;
+				font-size: 13px;
+				line-height: 24px;
+				overscroll-behavior: none;
+			}
+
+			#output {
+				position: absolute;
+				left: 10px;
+				top: 10px;
+				padding: 10px;
+				background: rgba(0, 0, 0, 0.5);
+				border-radius: 4px;
+				white-space: pre;
+			}
+
+			#loading-container {
+				position: absolute;
+				bottom: 20px;
+				left: 50%;
+				transform: translateX(-50%);
+				width: 300px;
+				padding: 10px;
+				background: rgba(0, 0, 0, 0.7);
+				border-radius: 4px;
+				visibility: hidden;
+			}
+
+			#loading-container .bar {
+				height: 8px;
+				background: #4db6ac;
+				border-radius: 4px;
+				transition: width 0.1s;
+				width: 0%;
+			}
+
+			#loading-container .text {
+				text-align: center;
+				margin-top: 5px;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="output"></div>
+		<div id="loading-container">
+			<div class="bar"></div>
+			<div class="text">0%</div>
+		</div>
+		<script type="module" src="./workerConstruction.js"></script>
+	</body>
+</html>

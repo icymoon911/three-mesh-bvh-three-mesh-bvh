@@ -21,6 +21,23 @@ export interface HitPointInfo {
 	faceIndex: number;
 }
 
+export interface SphereCastHit {
+	triangleIndex: number;
+	distance: number;
+	point: Vector3;
+}
+
+export interface DetailedProgressInfo {
+	progress: number;
+	nodeIndex: number;
+	depth: number;
+	isLeaf: boolean;
+	primitiveCount: number;
+	processedPrimitives: number;
+	totalPrimitives: number;
+	nodeCount: number;
+}
+
 export interface BVHOptions {
 	strategy?: SplitStrategy;
 	maxDepth?: number;
@@ -32,6 +49,7 @@ export interface BVHOptions {
 	indirect?: boolean;
 	verbose?: boolean;
 	onProgress?: ( progress: number ) => void;
+	onDetailedProgress?: ( info: DetailedProgressInfo ) => void;
 	range?: { start: number; count: number };
 }
 
@@ -151,6 +169,16 @@ export class MeshBVH extends GeometryBVH {
 	raycastFirst( ray: Ray, materialOrSide?: Side | Array<Material> | Material, near?: number, far?: number ): Intersection | null;
 
 	intersectsSphere( sphere: Sphere ): boolean;
+
+	collectIntersectingTriangles( sphere: Sphere, results?: Array<number> ): Array<number>;
+
+	sphereCast(
+		sphere: Sphere,
+		ray: Ray,
+		near?: number,
+		far?: number,
+		results?: Array<SphereCastHit>
+	): Array<SphereCastHit>;
 
 	intersectsBox( box: Box3, boxToMesh: Matrix4 ): boolean;
 

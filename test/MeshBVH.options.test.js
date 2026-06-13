@@ -79,6 +79,127 @@ describe( 'Options', () => {
 
 	} );
 
+	describe( 'onDetailedProgress', () => {
+
+		it( 'should provide detailed progress info for each node.', () => {
+
+			let progressCount = 0;
+			let lastInfo = null;
+			let maxDepth = 0;
+			let maxNodeCount = 0;
+			let leafCount = 0;
+			let internalCount = 0;
+
+			const bvh = new MeshBVH( mesh.geometry, {
+
+				onDetailedProgress( info ) {
+
+					progressCount ++;
+					lastInfo = info;
+					maxDepth = Math.max( maxDepth, info.depth );
+					maxNodeCount = Math.max( maxNodeCount, info.nodeCount );
+
+					if ( info.isLeaf ) {
+
+						leafCount ++;
+
+					} else {
+
+						internalCount ++;
+
+					}
+
+				}
+
+			} );
+
+			// Should have progress updates
+			expect( progressCount ).toBeGreaterThan( 0 );
+
+			// Last info should have progress = 1
+			expect( lastInfo.progress ).toBeCloseTo( 1.0, 2 );
+
+			// Should have both leaf and internal nodes
+			expect( leafCount ).toBeGreaterThan( 0 );
+			expect( internalCount ).toBeGreaterThan( 0 );
+
+			// Total primitives should match geometry
+			expect( lastInfo.totalPrimitives ).toBe( mesh.geometry.index.count / 3 );
+
+			// Max depth should be positive
+			expect( maxDepth ).toBeGreaterThan( 0 );
+
+			// Node count should be positive
+			expect( maxNodeCount ).toBeGreaterThan( 0 );
+
+			expect( bvh ).toBeTruthy();
+
+		} );
+
+		it( 'should track processed primitives correctly.', () => {
+
+			let lastProcessed = 0;
+			let totalPrimitives = 0;
+			let monotonic = true;
+
+			new MeshBVH( mesh.geometry, {
+
+				onDetailedProgress( info ) {
+
+					// processedPrimitives should be monotonically non-decreasing for leaves
+					if ( info.isLeaf && info.processedPrimitives < lastProcessed ) {
+
+						monotonic = false;
+
+					}
+
+					if ( info.isLeaf ) {
+
+						lastProcessed = info.processedPrimitives;
+
+					}
+
+					totalPrimitives = info.totalPrimitives;
+
+				}
+
+			} );
+
+			// processedPrimitives should reach totalPrimitives
+			expect( lastProcessed ).toBe( totalPrimitives );
+
+		} );
+
+		it( 'should work with both onProgress and onDetailedProgress.', () => {
+
+			let progressCount = 0;
+			let detailedCount = 0;
+
+			const bvh = new MeshBVH( mesh.geometry, {
+
+				onProgress() {
+
+					progressCount ++;
+
+				},
+
+				onDetailedProgress() {
+
+					detailedCount ++;
+
+				}
+
+			} );
+
+			// Both should be called
+			expect( progressCount ).toBeGreaterThan( 0 );
+			expect( detailedCount ).toBeGreaterThan( 0 );
+			expect( bvh ).toBeTruthy();
+
+		} );
+
+	} );
+
 	describe( 'setBoundingBox', () => {
 
 		it( 'should set the bounding box of the geometry when true.', () => {
