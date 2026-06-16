@@ -1,8 +1,9 @@
-/** @import { Object3D } from 'three' */
+/** @import { Object3D, Frustum } from 'three' */
 /** @import { IntersectsBoundsCallback, IntersectsRangeCallback, BoundsTraverseOrderCallback } from './BVH.js' */
-import { Box3, BufferGeometry, Matrix4, Mesh, Vector3, Ray, Sphere } from 'three';
+import { Box3, BufferGeometry, Matrix4, Mesh, Vector3, Ray, Sphere, Frustum } from 'three';
 import { BVH } from './BVH.js';
-import { INTERSECTED, NOT_INTERSECTED } from './Constants.js';
+import { INTERSECTED, NOT_INTERSECTED, CONTAINED } from './Constants.js';
+import { OrientedBox } from '../math/OrientedBox.js';
 
 const _geometry = /* @__PURE__ */ new BufferGeometry();
 const _matrix = /* @__PURE__ */ new Matrix4();
@@ -13,6 +14,13 @@ const _vec = /* @__PURE__ */ new Vector3();
 const _ray = /* @__PURE__ */ new Ray();
 const _mesh = /* @__PURE__ */ new Mesh();
 const _geometryRange = {};
+
+// scratch variables for collection methods
+const _obb = /* @__PURE__ */ new OrientedBox();
+const _box2 = /* @__PURE__ */ new Box3();
+const _point = /* @__PURE__ */ new Vector3();
+const _invMatrixWorld = /* @__PURE__ */ new Matrix4();
+const _frustum = /* @__PURE__ */ new Frustum();
 
 /**
  * @callback IntersectsObjectCallback
@@ -152,6 +160,379 @@ export class ObjectBVH extends BVH {
 			scratchPrimitive: null,
 			iterate: iterateOverObjects,
 		} );
+
+	}
+
+	/**
+	 * Collects all objects whose bounding boxes intersect the given axis-aligned box.
+	 *
+	 * When a BVH node is fully contained by the query box the entire subtree is collected
+	 * without further per-object tests (CONTAINED short-circuit). Otherwise each object's
+	 * own bounding box is tested against the oriented query box for precision.
+	 *
+	 * @param {Box3} box - The query box.
+	 * @param {Matrix4} [boxToBvh] - Transform from box-space into the BVH local frame.
+	 *   If omitted the box is assumed to already be in BVH-local space (identity).
+	 * @param {Array<Object>} [results=[]] - Array to append results to. Each entry is
+	 *   `{ object, instanceId, contained }`.
+	 * @param {Object} [options]
+	 * @param {boolean} [options.includeHidden=false] - Include objects with `visible === false`.
+	 * @returns {Array<Object>} The `results` array.
+	 */
+	collectObjectsInBox( box, boxToBvh, results = [], options = {} ) {
+
+		const { includeHidden = false } = options;
+		const { primitiveBuffer, objects, idMask, idBits, matrixWorld } = this;
+
+		// set up the oriented query box
+		if ( boxToBvh ) {
+
+			_obb.set( box.min, box.max, boxToBvh );
+
+		} else {
+
+			_obb.set( box.min, box.max, new Matrix4() );
+
+		}
+
+		_obb.needsUpdate = true;
+
+		// inverse of the OBB matrix, for containment tests (available after first intersectsBox call)
+		_invMatrixWorld.copy( matrixWorld ).invert();
+
+		this.shapecast( {
+			intersectsBounds: nodeBox => {
+
+				if ( ! _obb.intersectsBox( nodeBox ) ) return NOT_INTERSECTED;
+
+				// containment: transform AABB corners into OBB local space
+				const { min, max } = nodeBox;
+				for ( let x = 0; x < 2; x ++ ) {
+
+					for ( let y = 0; y < 2; y ++ ) {
+
+						for ( let z = 0; z < 2; z ++ ) {
+
+							_point.set(
+								x ? max.x : min.x,
+								y ? max.y : min.y,
+								z ? max.z : min.z
+							);
+							_point.applyMatrix4( _obb.invMatrix );
+							if (
+								_point.x < _obb.min.x || _point.x > _obb.max.x ||
+								_point.y < _obb.min.y || _point.y > _obb.max.y ||
+								_point.z < _obb.min.z || _point.z > _obb.max.z
+							) {
+
+								return INTERSECTED;
+
+							}
+
+						}
+
+					}
+
+				}
+
+				return CONTAINED;
+
+			},
+			intersectsRange: ( offset, count, contained ) => {
+
+				for ( let i = offset, l = offset + count; i < l; i ++ ) {
+
+					const compositeId = primitiveBuffer[ i ];
+					const id = getObjectId( compositeId, idMask );
+					const instanceId = getInstanceId( compositeId, idBits, idMask );
+					const object = objects[ id ];
+
+					if ( ! includeHidden && isObjectHidden( object, instanceId ) ) continue;
+
+					if ( contained ) {
+
+						results.push( { object, instanceId, contained: true } );
+
+					} else {
+
+						this._getPrimitiveBoundingBox( compositeId, _invMatrixWorld, _box2 );
+						if ( _obb.intersectsBox( _box2 ) ) {
+
+							results.push( { object, instanceId, contained: false } );
+
+						}
+
+					}
+
+				}
+
+				return false;
+
+			},
+		} );
+
+		return results;
+
+	}
+
+	/**
+	 * Collects all objects whose bounding boxes intersect the given sphere.
+	 *
+	 * The sphere is expected to be in the local space of the BVH.
+	 *
+	 * @param {Sphere} sphere - The query sphere.
+	 * @param {Array<Object>} [results=[]] - Array to append results to.
+	 * @param {Object} [options]
+	 * @param {boolean} [options.includeHidden=false]
+	 * @returns {Array<Object>} The `results` array.
+	 */
+	collectObjectsInSphere( sphere, results = [], options = {} ) {
+
+		const { includeHidden = false } = options;
+		const { primitiveBuffer, objects, idMask, idBits, matrixWorld } = this;
+
+		_invMatrixWorld.copy( matrixWorld ).invert();
+
+		this.shapecast( {
+			intersectsBounds: nodeBox => {
+
+				if ( ! sphere.intersectsBox( nodeBox ) ) return NOT_INTERSECTED;
+				if ( sphereContainsBox( sphere, nodeBox ) ) return CONTAINED;
+				return INTERSECTED;
+
+			},
+			intersectsRange: ( offset, count, contained ) => {
+
+				for ( let i = offset, l = offset + count; i < l; i ++ ) {
+
+					const compositeId = primitiveBuffer[ i ];
+					const id = getObjectId( compositeId, idMask );
+					const instanceId = getInstanceId( compositeId, idBits, idMask );
+					const object = objects[ id ];
+
+					if ( ! includeHidden && isObjectHidden( object, instanceId ) ) continue;
+
+					if ( contained ) {
+
+						results.push( { object, instanceId, contained: true } );
+
+					} else {
+
+						this._getPrimitiveBoundingBox( compositeId, _invMatrixWorld, _box2 );
+						if ( sphere.intersectsBox( _box2 ) ) {
+
+							results.push( { object, instanceId, contained: false } );
+
+						}
+
+					}
+
+				}
+
+				return false;
+
+			},
+		} );
+
+		return results;
+
+	}
+
+	/**
+	 * Collects all objects whose bounding boxes intersect the given frustum. Useful for
+	 * frustum culling scenarios. When a BVH node is fully contained by the frustum the
+	 * entire subtree is collected without per-object tests.
+	 *
+	 * @param {Frustum} frustum - The query frustum.
+	 * @param {Matrix4} [frustumToBvh] - Transform from the frustum's coordinate space into
+	 *   the BVH local frame. If omitted the frustum is assumed to already be in BVH-local space.
+	 * @param {Array<Object>} [results=[]] - Array to append results to.
+	 * @param {Object} [options]
+	 * @param {boolean} [options.includeHidden=false]
+	 * @returns {Array<Object>} The `results` array.
+	 */
+	collectObjectsInFrustum( frustum, frustumToBvh, results = [], options = {} ) {
+
+		const { includeHidden = false } = options;
+		const { primitiveBuffer, objects, idMask, idBits, matrixWorld } = this;
+
+		// transform frustum planes into BVH-local space if a transform is provided
+		let testFrustum;
+		if ( frustumToBvh ) {
+
+			for ( let i = 0; i < 6; i ++ ) {
+
+				_frustum.planes[ i ].copy( frustum.planes[ i ] ).applyMatrix4( frustumToBvh );
+
+			}
+
+			testFrustum = _frustum;
+
+		} else {
+
+			testFrustum = frustum;
+
+		}
+
+		_invMatrixWorld.copy( matrixWorld ).invert();
+
+		this.shapecast( {
+			intersectsBounds: nodeBox => {
+
+				if ( ! testFrustum.intersectsBox( nodeBox ) ) return NOT_INTERSECTED;
+				if ( frustumContainsBox( testFrustum, nodeBox ) ) return CONTAINED;
+				return INTERSECTED;
+
+			},
+			intersectsRange: ( offset, count, contained ) => {
+
+				for ( let i = offset, l = offset + count; i < l; i ++ ) {
+
+					const compositeId = primitiveBuffer[ i ];
+					const id = getObjectId( compositeId, idMask );
+					const instanceId = getInstanceId( compositeId, idBits, idMask );
+					const object = objects[ id ];
+
+					if ( ! includeHidden && isObjectHidden( object, instanceId ) ) continue;
+
+					if ( contained ) {
+
+						results.push( { object, instanceId, contained: true } );
+
+					} else {
+
+						this._getPrimitiveBoundingBox( compositeId, _invMatrixWorld, _box2 );
+						if ( testFrustum.intersectsBox( _box2 ) ) {
+
+							results.push( { object, instanceId, contained: false } );
+
+						}
+
+					}
+
+				}
+
+				return false;
+
+			},
+		} );
+
+		return results;
+
+	}
+
+	/**
+	 * Batch query: collects objects matching one or more shapes in a single BVH traversal.
+	 *
+	 * Each entry in `shapes` is a descriptor object:
+	 * - `{ type: 'box',    shape: Box3,    matrix: Matrix4 }` — box with optional boxToBvh transform
+	 * - `{ type: 'sphere', shape: Sphere }` — sphere in BVH-local space
+	 * - `{ type: 'frustum', shape: Frustum, matrix: Matrix4 }` — frustum with optional frustumToBvh transform
+	 *
+	 * Result entries include a `shapeIndex` field indicating which shape produced the hit.
+	 *
+	 * @param {Array<Object>} shapes - Array of shape descriptors.
+	 * @param {Array<Object>} [results=[]] - Array to append results to. Each entry is
+	 *   `{ object, instanceId, contained, shapeIndex }`.
+	 * @param {Object} [options]
+	 * @param {boolean} [options.includeHidden=false]
+	 * @returns {Array<Object>} The `results` array.
+	 */
+	collectObjectsInShapes( shapes, results = [], options = {} ) {
+
+		const { includeHidden = false } = options;
+		const { primitiveBuffer, objects, idMask, idBits, matrixWorld } = this;
+
+		// pre-process shapes into tester objects
+		const testers = shapes.map( ( desc, idx ) => prepareShapeTester( desc, idx ) );
+
+		_invMatrixWorld.copy( matrixWorld ).invert();
+
+		this.shapecast( {
+			intersectsBounds: nodeBox => {
+
+				// always test ALL shapes so lastBoundsResult stays fresh for every tester
+				let best = NOT_INTERSECTED;
+				for ( let s = 0, sl = testers.length; s < sl; s ++ ) {
+
+					const r = testers[ s ].testBounds( nodeBox );
+					if ( r > best ) best = r;
+
+				}
+
+				return best;
+
+			},
+			intersectsRange: ( offset, count, contained ) => {
+
+				let objBoxComputed = false;
+
+				for ( let i = offset, l = offset + count; i < l; i ++ ) {
+
+					const compositeId = primitiveBuffer[ i ];
+					const id = getObjectId( compositeId, idMask );
+					const instanceId = getInstanceId( compositeId, idBits, idMask );
+					const object = objects[ id ];
+
+					if ( ! includeHidden && isObjectHidden( object, instanceId ) ) continue;
+
+					if ( contained ) {
+
+						for ( let s = 0, sl = testers.length; s < sl; s ++ ) {
+
+							if ( testers[ s ].lastBoundsResult === CONTAINED ) {
+
+								results.push( { object, instanceId, contained: true, shapeIndex: testers[ s ].index } );
+
+							} else if ( testers[ s ].lastBoundsResult === INTERSECTED ) {
+
+								// shape intersected but did not contain the node — do per-object test
+								if ( ! objBoxComputed ) {
+
+									this._getPrimitiveBoundingBox( compositeId, _invMatrixWorld, _box2 );
+									objBoxComputed = true;
+
+								}
+
+								if ( testers[ s ].testObject( _box2 ) ) {
+
+									results.push( { object, instanceId, contained: false, shapeIndex: testers[ s ].index } );
+
+								}
+
+							}
+
+						}
+
+					} else {
+
+						if ( ! objBoxComputed ) {
+
+							this._getPrimitiveBoundingBox( compositeId, _invMatrixWorld, _box2 );
+							objBoxComputed = true;
+
+						}
+
+						for ( let s = 0, sl = testers.length; s < sl; s ++ ) {
+
+							if ( testers[ s ].testObject( _box2 ) ) {
+
+								results.push( { object, instanceId, contained: false, shapeIndex: testers[ s ].index } );
+
+							}
+
+						}
+
+					}
+
+				}
+
+				return false;
+
+			},
+		} );
+
+		return results;
 
 	}
 
@@ -654,5 +1035,217 @@ function shrinkToSphere( box, sphere ) {
 
 	_vec.copy( sphere.center ).addScalar( sphere.radius );
 	box.max.min( _vec );
+
+}
+
+// returns true if the object (or batched instance) should be skipped due to visibility
+function isObjectHidden( object, instanceId ) {
+
+	if ( ! object.visible ) return true;
+	if ( object.isBatchedMesh && ! object.getVisibleAt( instanceId ) ) return true;
+	return false;
+
+}
+
+// returns true if every corner of the AABB lies within the sphere
+function sphereContainsBox( sphere, box ) {
+
+	const r2 = sphere.radius * sphere.radius;
+	const cx = sphere.center.x, cy = sphere.center.y, cz = sphere.center.z;
+	const { min, max } = box;
+	for ( let x = 0; x < 2; x ++ ) {
+
+		const px = x ? max.x : min.x;
+		for ( let y = 0; y < 2; y ++ ) {
+
+			const py = y ? max.y : min.y;
+			for ( let z = 0; z < 2; z ++ ) {
+
+				const pz = z ? max.z : min.z;
+				const dx = px - cx, dy = py - cy, dz = pz - cz;
+				if ( dx * dx + dy * dy + dz * dz > r2 ) return false;
+
+			}
+
+		}
+
+	}
+
+	return true;
+
+}
+
+// returns true if every corner of the AABB lies inside the frustum
+function frustumContainsBox( frustum, box ) {
+
+	const { min, max } = box;
+	for ( let x = 0; x < 2; x ++ ) {
+
+		for ( let y = 0; y < 2; y ++ ) {
+
+			for ( let z = 0; z < 2; z ++ ) {
+
+				_point.set(
+					x ? max.x : min.x,
+					y ? max.y : min.y,
+					z ? max.z : min.z
+				);
+				if ( ! frustum.containsPoint( _point ) ) return false;
+
+			}
+
+		}
+
+	}
+
+	return true;
+
+}
+
+// build a tester object for the batch collectObjectsInShapes API
+function prepareShapeTester( desc, index ) {
+
+	const { type, shape, matrix } = desc;
+
+	if ( type === 'box' ) {
+
+		if ( matrix ) {
+
+			_obb.set( shape.min, shape.max, matrix );
+
+		} else {
+
+			_obb.set( shape.min, shape.max, new Matrix4() );
+
+		}
+
+		_obb.needsUpdate = true;
+		// snapshot the OBB state so multiple testers don't clobber each other
+		const obb = new OrientedBox( shape.min, shape.max, matrix || new Matrix4() );
+		obb.needsUpdate = true;
+		obb.update();
+
+		return {
+			index,
+			lastBoundsResult: NOT_INTERSECTED,
+			testBounds( nodeBox ) {
+
+				const r = obb.intersectsBox( nodeBox ) ?
+					( obbContainsBox( obb, nodeBox ) ? CONTAINED : INTERSECTED ) :
+					NOT_INTERSECTED;
+				this.lastBoundsResult = r;
+				return r;
+
+			},
+			testObject( objBox ) {
+
+				return obb.intersectsBox( objBox );
+
+			},
+		};
+
+	} else if ( type === 'sphere' ) {
+
+		return {
+			index,
+			lastBoundsResult: NOT_INTERSECTED,
+			testBounds( nodeBox ) {
+
+				const r = shape.intersectsBox( nodeBox ) ?
+					( sphereContainsBox( shape, nodeBox ) ? CONTAINED : INTERSECTED ) :
+					NOT_INTERSECTED;
+				this.lastBoundsResult = r;
+				return r;
+
+			},
+			testObject( objBox ) {
+
+				return shape.intersectsBox( objBox );
+
+			},
+		};
+
+	} else if ( type === 'frustum' ) {
+
+		// build a local-space frustum
+		const localFrustum = new Frustum();
+		if ( matrix ) {
+
+			for ( let i = 0; i < 6; i ++ ) {
+
+				localFrustum.planes[ i ].copy( shape.planes[ i ] ).applyMatrix4( matrix );
+
+			}
+
+		} else {
+
+			for ( let i = 0; i < 6; i ++ ) {
+
+				localFrustum.planes[ i ].copy( shape.planes[ i ] );
+
+			}
+
+		}
+
+		return {
+			index,
+			lastBoundsResult: NOT_INTERSECTED,
+			testBounds( nodeBox ) {
+
+				const r = localFrustum.intersectsBox( nodeBox ) ?
+					( frustumContainsBox( localFrustum, nodeBox ) ? CONTAINED : INTERSECTED ) :
+					NOT_INTERSECTED;
+				this.lastBoundsResult = r;
+				return r;
+
+			},
+			testObject( objBox ) {
+
+				return localFrustum.intersectsBox( objBox );
+
+			},
+		};
+
+	}
+
+	throw new Error( `ObjectBVH.collectObjectsInShapes: unknown shape type "${ type }"` );
+
+}
+
+// returns true if every corner of the given AABB is inside the OBB
+function obbContainsBox( obb, box ) {
+
+	const { min, max } = box;
+	const obbMin = obb.min, obbMax = obb.max;
+	const invMat = obb.invMatrix;
+	for ( let x = 0; x < 2; x ++ ) {
+
+		for ( let y = 0; y < 2; y ++ ) {
+
+			for ( let z = 0; z < 2; z ++ ) {
+
+				_point.set(
+					x ? max.x : min.x,
+					y ? max.y : min.y,
+					z ? max.z : min.z
+				);
+				_point.applyMatrix4( invMat );
+				if (
+					_point.x < obbMin.x || _point.x > obbMax.x ||
+					_point.y < obbMin.y || _point.y > obbMax.y ||
+					_point.z < obbMin.z || _point.z > obbMax.z
+				) {
+
+					return false;
+
+				}
+
+			}
+
+		}
+
+	}
+
+	return true;
 
 }

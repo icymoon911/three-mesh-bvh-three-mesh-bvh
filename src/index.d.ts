@@ -1,7 +1,7 @@
 import { BufferGeometry, Vector3, Side, Material, Ray, Sphere, Matrix4, Color,
 	Intersection, Box3, Triangle, Vector2, Raycaster, MeshBasicMaterial, Group,
 	LineBasicMaterial, Mesh, DataTexture, BufferAttribute, Line3, Object3D,
-	SkinnedMesh,
+	SkinnedMesh, Frustum,
 } from 'three';
 
 // Contants
@@ -182,6 +182,12 @@ export class MeshBVH extends GeometryBVH {
 
 	intersectsBox( box: Box3, boxToMesh: Matrix4 ): boolean;
 
+	collectTrianglesInBox( box: Box3, boxToBvh: Matrix4, results?: Array<number> ): Array<number>;
+
+	collectTrianglesInSphere( sphere: Sphere, results?: Array<number> ): Array<number>;
+
+	collectTrianglesInFrustum( frustum: Frustum, matrixToLocal?: Matrix4 | null, results?: Array<number> ): Array<number>;
+
 	intersectsGeometry( geometry: BufferGeometry, geometryToBvh: Matrix4 ): boolean;
 
 	closestPointToPoint(
@@ -297,7 +303,58 @@ export class ObjectBVH extends BVH {
 	): boolean;
 	raycast( raycaster: Raycaster, intersects?: Array<Intersection> ): Array<Intersection>;
 
+	collectObjectsInBox(
+		box: Box3,
+		boxToBvh?: Matrix4,
+		results?: Array<CollectedObject>,
+		options?: CollectOptions
+	): Array<CollectedObject>;
+
+	collectObjectsInSphere(
+		sphere: Sphere,
+		results?: Array<CollectedObject>,
+		options?: CollectOptions
+	): Array<CollectedObject>;
+
+	collectObjectsInFrustum(
+		frustum: Frustum,
+		frustumToBvh?: Matrix4,
+		results?: Array<CollectedObject>,
+		options?: CollectOptions
+	): Array<CollectedObject>;
+
+	collectObjectsInShapes(
+		shapes: Array<ShapeDescriptor>,
+		results?: Array<CollectedObjectWithShape>,
+		options?: CollectOptions
+	): Array<CollectedObjectWithShape>;
+
 }
+
+export interface CollectedObject {
+
+	object: Object3D;
+	instanceId: number;
+	contained: boolean;
+
+}
+
+export interface CollectedObjectWithShape extends CollectedObject {
+
+	shapeIndex: number;
+
+}
+
+export interface CollectOptions {
+
+	includeHidden?: boolean;
+
+}
+
+export type ShapeDescriptor =
+	| { type: 'box'; shape: Box3; matrix?: Matrix4 }
+	| { type: 'sphere'; shape: Sphere }
+	| { type: 'frustum'; shape: Frustum; matrix?: Matrix4 };
 
 // SerializedBVH
 export class SerializedBVH {

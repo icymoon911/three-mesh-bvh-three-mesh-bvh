@@ -1,10 +1,12 @@
-/** @import { BufferGeometry, Sphere, Box3, Intersection, Material, Object3D, Raycaster } from 'three' */
+/** @import { BufferGeometry, Sphere, Box3, Frustum, Intersection, Material, Object3D, Raycaster } from 'three' */
 /** @import { ExtendedTriangle } from '../math/ExtendedTriangle.js' */
 /** @import { IntersectsBoundsCallback, IntersectsRangeCallback, BoundsTraverseOrderCallback, IntersectsRangesCallback } from './BVH.js' */
-import { BufferAttribute, FrontSide, Ray, Vector3, Matrix4, Sphere } from 'three';
-import { SKIP_GENERATION, BYTES_PER_NODE, UINT32_PER_NODE, FLOAT32_EPSILON } from './Constants.js';
+import { BufferAttribute, FrontSide, Ray, Vector3, Matrix4, Matrix3, Sphere, Frustum } from 'three';
+import { SKIP_GENERATION, BYTES_PER_NODE, UINT32_PER_NODE, FLOAT32_EPSILON, CONTAINED, INTERSECTED, NOT_INTERSECTED } from './Constants.js';
 import { OrientedBox } from '../math/OrientedBox.js';
+import { ExtendedTriangle } from '../math/ExtendedTriangle.js';
 import { ExtendedTrianglePool } from '../utils/ExtendedTrianglePool.js';
+import { setTriangle } from '../utils/TriangleUtilities.js';
 import { closestPointToPoint } from './cast/closestPointToPoint.js';
 import { IS_LEAF } from './utils/nodeBufferUtils.js';
 
@@ -25,7 +27,6 @@ import { intersectsGeometry_indirect } from './cast/intersectsGeometry_indirect.
 import { closestPointToGeometry_indirect } from './cast/closestPointToGeometry_indirect.generated.js';
 import { collectIntersectingTriangles_indirect } from './cast/collectIntersectingTriangles_indirect.generated.js';
 import { sphereCast_indirect } from './cast/sphereCast_indirect.generated.js';
-import { setTriangle } from '../utils/TriangleUtilities.js';
 import { convertRaycastIntersect } from '../utils/GeometryRayIntersectUtilities.js';
 import { GeometryBVH } from './GeometryBVH.js';
 
@@ -35,6 +36,144 @@ const _direction = /* @__PURE__ */ new Vector3();
 const _inverseMatrix = /* @__PURE__ */ new Matrix4();
 const _worldScale = /* @__PURE__ */ new Vector3();
 const _getters = [ 'getX', 'getY', 'getZ' ];
+const _tempVec = /* @__PURE__ */ new Vector3();
+const _collectTriangle = /* @__PURE__ */ new ExtendedTriangle();
+const _tempFrustum = /* @__PURE__ */ new Frustum();
+const _normalMatrix = /* @__PURE__ */ new Matrix3();
+
+// Helper: check if all 8 corners of an AABB are inside an OBB
+function obbContainsBox( obb, box ) {
+
+	const invMatrix = obb.invMatrix;
+	const obbMin = obb.min;
+	const obbMax = obb.max;
+	const boxMin = box.min;
+	const boxMax = box.max;
+
+	for ( let x = 0; x <= 1; x ++ ) {
+
+		for ( let y = 0; y <= 1; y ++ ) {
+
+			for ( let z = 0; z <= 1; z ++ ) {
+
+				_tempVec.set(
+					x ? boxMax.x : boxMin.x,
+					y ? boxMax.y : boxMin.y,
+					z ? boxMax.z : boxMin.z
+				).applyMatrix4( invMatrix );
+
+				if ( _tempVec.x < obbMin.x || _tempVec.x > obbMax.x ||
+					_tempVec.y < obbMin.y || _tempVec.y > obbMax.y ||
+					_tempVec.z < obbMin.z || _tempVec.z > obbMax.z ) {
+
+					return false;
+
+				}
+
+			}
+
+		}
+
+	}
+
+	return true;
+
+}
+
+// Helper: check if all 8 corners of an AABB are inside a sphere
+function sphereContainsBox( sphere, box ) {
+
+	const center = sphere.center;
+	const r2 = sphere.radius * sphere.radius;
+	const boxMin = box.min;
+	const boxMax = box.max;
+
+	for ( let x = 0; x <= 1; x ++ ) {
+
+		for ( let y = 0; y <= 1; y ++ ) {
+
+			for ( let z = 0; z <= 1; z ++ ) {
+
+				const dx = ( x ? boxMax.x : boxMin.x ) - center.x;
+				const dy = ( y ? boxMax.y : boxMin.y ) - center.y;
+				const dz = ( z ? boxMax.z : boxMin.z ) - center.z;
+
+				if ( dx * dx + dy * dy + dz * dz > r2 ) return false;
+
+			}
+
+		}
+
+	}
+
+	return true;
+
+}
+
+// Helper: check if all 8 corners of an AABB are inside a frustum
+function frustumContainsBox( frustum, box ) {
+
+	const planes = frustum.planes;
+	const boxMin = box.min;
+	const boxMax = box.max;
+
+	for ( let x = 0; x <= 1; x ++ ) {
+
+		for ( let y = 0; y <= 1; y ++ ) {
+
+			for ( let z = 0; z <= 1; z ++ ) {
+
+				_tempVec.set(
+					x ? boxMax.x : boxMin.x,
+					y ? boxMax.y : boxMin.y,
+					z ? boxMax.z : boxMin.z
+				);
+
+				for ( let p = 0; p < 6; p ++ ) {
+
+					if ( planes[ p ].distanceToPoint( _tempVec ) < 0 ) {
+
+						return false;
+
+					}
+
+				}
+
+			}
+
+		}
+
+	}
+
+	return true;
+
+}
+
+// Helper: check if a triangle intersects a frustum (conservative test using frustum plane normals
+// as separating axes - may over-report but never misses a true intersection)
+function triangleIntersectsFrustum( tri, frustum ) {
+
+	const planes = frustum.planes;
+	const a = tri.a;
+	const b = tri.b;
+	const c = tri.c;
+
+	for ( let p = 0; p < 6; p ++ ) {
+
+		const plane = planes[ p ];
+		if ( plane.distanceToPoint( a ) < 0 &&
+			plane.distanceToPoint( b ) < 0 &&
+			plane.distanceToPoint( c ) < 0 ) {
+
+			return false;
+
+		}
+
+	}
+
+	return true;
+
+}
 
 /**
  * @callback IntersectsTriangleCallback
@@ -873,6 +1012,237 @@ export class MeshBVH extends GeometryBVH {
 			sphereCastFunc( this, i, sphere, ray, near, far, results );
 
 		}
+
+		return results;
+
+	}
+
+	/**
+	 * Collects all triangle indices that intersect the given oriented bounding box (OBB).
+	 * Unlike `intersectsBox` which returns a boolean, this method returns the specific
+	 * triangle indices that are intersected by the box.
+	 *
+	 * When a BVH node's bounding box is fully contained within the query box, all triangles
+	 * in that subtree are collected without per-triangle intersection tests (CONTAINED optimization).
+	 *
+	 * The `boxToBvh` parameter transforms the box into the BVH's local frame.
+	 *
+	 * @param {Box3} box - The query box.
+	 * @param {Matrix4} boxToBvh - Transform of the box into the local space of this BVH.
+	 * @param {Array<number>} [results=[]] - Optional array to append results to.
+	 * @returns {Array<number>} Array of triangle indices that intersect the box.
+	 */
+	collectTrianglesInBox( box, boxToBvh, results = [] ) {
+
+		_obb.set( box.min, box.max, boxToBvh );
+		_obb.needsUpdate = true;
+
+		const resolve = this.resolvePrimitiveIndex;
+		const geometry = this.geometry;
+		const index = geometry.index;
+		const pos = geometry.attributes.position;
+		const tri = _collectTriangle;
+
+		this.shapecast( {
+			intersectsBounds: aabb => {
+
+				const intersects = _obb.intersectsBox( aabb );
+				if ( ! intersects ) return NOT_INTERSECTED;
+				if ( obbContainsBox( _obb, aabb ) ) return CONTAINED;
+				return INTERSECTED;
+
+			},
+			intersectsRange: ( offset, count, contained ) => {
+
+				if ( contained ) {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						results.push( resolve( i ) );
+
+					}
+
+				} else {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						const ti = resolve( i );
+						setTriangle( tri, ti * 3, index, pos );
+						tri.needsUpdate = true;
+
+						if ( _obb.intersectsTriangle( tri ) ) {
+
+							results.push( ti );
+
+						}
+
+					}
+
+				}
+
+				return false;
+
+			}
+		} );
+
+		return results;
+
+	}
+
+	/**
+	 * Collects all triangle indices that intersect the given sphere. Unlike
+	 * `intersectsSphere` which returns a boolean, this method returns the specific
+	 * triangle indices.
+	 *
+	 * When a BVH node's bounding box is fully contained within the sphere, all triangles
+	 * in that subtree are collected without per-triangle intersection tests (CONTAINED optimization).
+	 *
+	 * The sphere is expected to be in the local space of the BVH.
+	 *
+	 * @param {Sphere} sphere - The query sphere.
+	 * @param {Array<number>} [results=[]] - Optional array to append results to.
+	 * @returns {Array<number>} Array of triangle indices that intersect the sphere.
+	 */
+	collectTrianglesInSphere( sphere, results = [] ) {
+
+		const resolve = this.resolvePrimitiveIndex;
+		const geometry = this.geometry;
+		const index = geometry.index;
+		const pos = geometry.attributes.position;
+		const tri = _collectTriangle;
+
+		this.shapecast( {
+			intersectsBounds: aabb => {
+
+				const intersects = sphere.intersectsBox( aabb );
+				if ( ! intersects ) return NOT_INTERSECTED;
+				if ( sphereContainsBox( sphere, aabb ) ) return CONTAINED;
+				return INTERSECTED;
+
+			},
+			intersectsRange: ( offset, count, contained ) => {
+
+				if ( contained ) {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						results.push( resolve( i ) );
+
+					}
+
+				} else {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						const ti = resolve( i );
+						setTriangle( tri, ti * 3, index, pos );
+						tri.needsUpdate = true;
+
+						if ( tri.intersectsSphere( sphere ) ) {
+
+							results.push( ti );
+
+						}
+
+					}
+
+				}
+
+				return false;
+
+			}
+		} );
+
+		return results;
+
+	}
+
+	/**
+	 * Collects all triangle indices that lie within the given frustum. This is useful for
+	 * frustum culling scenarios where you need to identify which triangles are visible to
+	 * a camera.
+	 *
+	 * When a BVH node's bounding box is fully contained within the frustum, all triangles
+	 * in that subtree are collected without per-triangle intersection tests (CONTAINED optimization).
+	 *
+	 * The optional `matrixToLocal` transforms the frustum planes into the BVH's local space.
+	 * If not provided, the frustum is assumed to already be in the BVH's local frame.
+	 *
+	 * @param {Frustum} frustum - The query frustum.
+	 * @param {Matrix4|null} [matrixToLocal=null] - Optional transform to bring the frustum
+	 *   into the local space of this BVH.
+	 * @param {Array<number>} [results=[]] - Optional array to append results to.
+	 * @returns {Array<number>} Array of triangle indices inside the frustum.
+	 */
+	collectTrianglesInFrustum( frustum, matrixToLocal = null, results = [] ) {
+
+		// Transform frustum into BVH local space if a matrix is provided
+		let activeFrustum;
+		if ( matrixToLocal ) {
+
+			_tempFrustum.copy( frustum );
+			_normalMatrix.getNormalMatrix( matrixToLocal );
+			for ( let i = 0; i < 6; i ++ ) {
+
+				_tempFrustum.planes[ i ].applyMatrix4( matrixToLocal, _normalMatrix );
+
+			}
+
+			activeFrustum = _tempFrustum;
+
+		} else {
+
+			activeFrustum = frustum;
+
+		}
+
+		const resolve = this.resolvePrimitiveIndex;
+		const geometry = this.geometry;
+		const index = geometry.index;
+		const pos = geometry.attributes.position;
+		const tri = _collectTriangle;
+
+		this.shapecast( {
+			intersectsBounds: aabb => {
+
+				const intersects = activeFrustum.intersectsBox( aabb );
+				if ( ! intersects ) return NOT_INTERSECTED;
+				if ( frustumContainsBox( activeFrustum, aabb ) ) return CONTAINED;
+				return INTERSECTED;
+
+			},
+			intersectsRange: ( offset, count, contained ) => {
+
+				if ( contained ) {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						results.push( resolve( i ) );
+
+					}
+
+				} else {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						const ti = resolve( i );
+						setTriangle( tri, ti * 3, index, pos );
+						tri.needsUpdate = true;
+
+						if ( triangleIntersectsFrustum( tri, activeFrustum ) ) {
+
+							results.push( ti );
+
+						}
+
+					}
+
+				}
+
+				return false;
+
+			}
+		} );
 
 		return results;
 
