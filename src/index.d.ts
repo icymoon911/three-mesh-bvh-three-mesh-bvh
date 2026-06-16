@@ -1,7 +1,7 @@
 import { BufferGeometry, Vector3, Side, Material, Ray, Sphere, Matrix4, Color,
 	Intersection, Box3, Triangle, Vector2, Raycaster, MeshBasicMaterial, Group,
 	LineBasicMaterial, Mesh, DataTexture, BufferAttribute, Line3, Object3D,
-	SkinnedMesh,
+	SkinnedMesh, Frustum,
 } from 'three';
 
 // Contants
@@ -186,6 +186,12 @@ export class MeshBVH extends GeometryBVH {
 	): Array<number>;
 
 	intersectsBox( box: Box3, boxToMesh: Matrix4 ): boolean;
+
+	collectTrianglesInBox( box: Box3, boxToBvh: Matrix4 ): Array<number>;
+
+	collectTrianglesInSphere( sphere: Sphere ): Array<number>;
+
+	collectTrianglesInFrustum( frustum: Frustum, frustumToBvh?: Matrix4 | null ): Array<number>;
 
 	intersectsGeometry( geometry: BufferGeometry, geometryToBvh: Matrix4 ): boolean;
 

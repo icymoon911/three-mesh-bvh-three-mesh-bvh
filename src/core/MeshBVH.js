@@ -1,8 +1,8 @@
-/** @import { BufferGeometry, Sphere, Box3, Intersection, Material, Object3D, Raycaster } from 'three' */
+/** @import { BufferGeometry, Sphere, Box3, Intersection, Material, Object3D, Raycaster, Frustum } from 'three' */
 /** @import { ExtendedTriangle } from '../math/ExtendedTriangle.js' */
 /** @import { IntersectsBoundsCallback, IntersectsRangeCallback, BoundsTraverseOrderCallback, IntersectsRangesCallback } from './BVH.js' */
-import { BufferAttribute, Box3, FrontSide, Ray, Vector3, Matrix4, Sphere, Line3 } from 'three';
-import { SKIP_GENERATION, BYTES_PER_NODE, UINT32_PER_NODE, FLOAT32_EPSILON } from './Constants.js';
+import { BufferAttribute, Box3, FrontSide, Ray, Vector3, Matrix4, Sphere, Line3, Frustum } from 'three';
+import { SKIP_GENERATION, BYTES_PER_NODE, UINT32_PER_NODE, FLOAT32_EPSILON, CONTAINED, INTERSECTED, NOT_INTERSECTED } from './Constants.js';
 import { OrientedBox } from '../math/OrientedBox.js';
 import { ExtendedTrianglePool } from '../utils/ExtendedTrianglePool.js';
 import { closestPointToPoint } from './cast/closestPointToPoint.js';
@@ -40,6 +40,120 @@ const _sphereCastSphere = /* @__PURE__ */ new Sphere();
 const _sphereCastBox = /* @__PURE__ */ new Box3();
 const _sphereCastRay = /* @__PURE__ */ new Ray();
 const _sphereCastPoint = /* @__PURE__ */ new Vector3();
+
+// scratch objects for collect methods
+const _collectCorner = /* @__PURE__ */ new Vector3();
+const _collectFrustum = /* @__PURE__ */ new Frustum();
+
+// Helper: check if an OBB fully contains an AABB.
+// Requires obb.update() to have been called (i.e. obb.needsUpdate === false).
+function obbContainsBox( obb, box ) {
+
+	const invMatrix = obb.invMatrix;
+	const obbMin = obb.min;
+	const obbMax = obb.max;
+	const bMin = box.min;
+	const bMax = box.max;
+	const corner = _collectCorner;
+
+	for ( let x = 0; x <= 1; x ++ ) {
+
+		for ( let y = 0; y <= 1; y ++ ) {
+
+			for ( let z = 0; z <= 1; z ++ ) {
+
+				corner.set(
+					x ? bMax.x : bMin.x,
+					y ? bMax.y : bMin.y,
+					z ? bMax.z : bMin.z
+				).applyMatrix4( invMatrix );
+
+				if ( corner.x < obbMin.x || corner.x > obbMax.x ||
+					corner.y < obbMin.y || corner.y > obbMax.y ||
+					corner.z < obbMin.z || corner.z > obbMax.z ) {
+
+					return false;
+
+				}
+
+			}
+
+		}
+
+	}
+
+	return true;
+
+}
+
+// Helper: check if a sphere fully contains an AABB.
+function sphereContainsBox( sphere, box ) {
+
+	const center = sphere.center;
+	const r = sphere.radius;
+	const rSq = r * r;
+	const bMin = box.min;
+	const bMax = box.max;
+
+	for ( let x = 0; x <= 1; x ++ ) {
+
+		for ( let y = 0; y <= 1; y ++ ) {
+
+			for ( let z = 0; z <= 1; z ++ ) {
+
+				const cx = x ? bMax.x : bMin.x;
+				const cy = y ? bMax.y : bMin.y;
+				const cz = z ? bMax.z : bMin.z;
+				const dx = cx - center.x;
+				const dy = cy - center.y;
+				const dz = cz - center.z;
+				if ( dx * dx + dy * dy + dz * dz > rSq ) return false;
+
+			}
+
+		}
+
+	}
+
+	return true;
+
+}
+
+// Helper: check if a frustum fully contains an AABB.
+function frustumContainsBox( frustum, box ) {
+
+	const planes = frustum.planes;
+	const bMin = box.min;
+	const bMax = box.max;
+	const corner = _collectCorner;
+
+	for ( let x = 0; x <= 1; x ++ ) {
+
+		for ( let y = 0; y <= 1; y ++ ) {
+
+			for ( let z = 0; z <= 1; z ++ ) {
+
+				corner.set(
+					x ? bMax.x : bMin.x,
+					y ? bMax.y : bMin.y,
+					z ? bMax.z : bMin.z
+				);
+
+				for ( let p = 0; p < 6; p ++ ) {
+
+					if ( planes[ p ].distanceToPoint( corner ) < 0 ) return false;
+
+				}
+
+			}
+
+		}
+
+	}
+
+	return true;
+
+}
 
 /**
  * @callback IntersectsTriangleCallback
@@ -933,6 +1047,261 @@ export class MeshBVH extends GeometryBVH {
 		);
 
 		return intersects;
+
+	}
+
+	/**
+	 * Collects all triangle indices that intersect the given oriented bounding box (OBB). Unlike
+	 * `intersectsBox` which returns a boolean, this method returns the actual triangle indices that
+	 * overlap the query volume. When a BVH node's bounding box is fully contained by the OBB, all
+	 * triangles in that subtree are collected without per-triangle intersection tests (CONTAINED
+	 * optimization).
+	 *
+	 * The `boxToBvh` matrix transforms the box into the BVH's local space.
+	 *
+	 * When the BVH is built in indirect mode, returned indices are mapped through
+	 * `resolvePrimitiveIndex` to match the geometry's index buffer layout (consistent with
+	 * `raycast` results).
+	 *
+	 * @param {Box3} box
+	 * @param {Matrix4} boxToBvh - Transform of the box into the local space of this BVH.
+	 * @returns {Array<number>} Array of intersecting triangle indices.
+	 */
+	collectTrianglesInBox( box, boxToBvh ) {
+
+		_obb.set( box.min, box.max, boxToBvh );
+		_obb.needsUpdate = true;
+
+		const result = [];
+		const resolveIndex = this.resolvePrimitiveIndex;
+		const geometry = this.geometry;
+		const indexAttr = geometry.index;
+		const posAttr = geometry.attributes.position;
+		const triangle = ExtendedTrianglePool.getPrimitive();
+
+		this.shapecast( {
+			intersectsBounds: nodeBox => {
+
+				if ( ! _obb.intersectsBox( nodeBox ) ) return NOT_INTERSECTED;
+				if ( obbContainsBox( _obb, nodeBox ) ) return CONTAINED;
+				return INTERSECTED;
+
+			},
+			intersectsRange: ( offset, count, contained ) => {
+
+				if ( contained ) {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						result.push( resolveIndex( i ) );
+
+					}
+
+				} else {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						const tri = resolveIndex( i );
+						setTriangle( triangle, tri * 3, indexAttr, posAttr );
+						triangle.needsUpdate = true;
+						if ( _obb.intersectsTriangle( triangle ) ) {
+
+							result.push( tri );
+
+						}
+
+					}
+
+				}
+
+				return false;
+
+			}
+		} );
+
+		ExtendedTrianglePool.releasePrimitive( triangle );
+		return result;
+
+	}
+
+	/**
+	 * Collects all triangle indices that intersect the given sphere. Unlike `intersectsSphere`
+	 * which returns a boolean (or uses a side-effect result array), this method provides a
+	 * consistent collection API matching `collectTrianglesInBox`. When a BVH node's bounding box
+	 * is fully contained by the sphere, all triangles in that subtree are collected without
+	 * per-triangle intersection tests (CONTAINED optimization).
+	 *
+	 * The sphere is expected to be in the BVH's local space.
+	 *
+	 * When the BVH is built in indirect mode, returned indices are mapped through
+	 * `resolvePrimitiveIndex` to match the geometry's index buffer layout.
+	 *
+	 * @param {Sphere} sphere
+	 * @returns {Array<number>} Array of intersecting triangle indices.
+	 */
+	collectTrianglesInSphere( sphere ) {
+
+		const result = [];
+		const resolveIndex = this.resolvePrimitiveIndex;
+		const geometry = this.geometry;
+		const indexAttr = geometry.index;
+		const posAttr = geometry.attributes.position;
+		const triangle = ExtendedTrianglePool.getPrimitive();
+
+		this.shapecast( {
+			intersectsBounds: nodeBox => {
+
+				if ( ! sphere.intersectsBox( nodeBox ) ) return NOT_INTERSECTED;
+				if ( sphereContainsBox( sphere, nodeBox ) ) return CONTAINED;
+				return INTERSECTED;
+
+			},
+			intersectsRange: ( offset, count, contained ) => {
+
+				if ( contained ) {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						result.push( resolveIndex( i ) );
+
+					}
+
+				} else {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						const tri = resolveIndex( i );
+						setTriangle( triangle, tri * 3, indexAttr, posAttr );
+						triangle.needsUpdate = true;
+						if ( triangle.intersectsSphere( sphere ) ) {
+
+							result.push( tri );
+
+						}
+
+					}
+
+				}
+
+				return false;
+
+			}
+		} );
+
+		ExtendedTrianglePool.releasePrimitive( triangle );
+		return result;
+
+	}
+
+	/**
+	 * Collects all triangle indices that lie within the given frustum. This is primarily useful
+	 * for frustum culling in large scenes — collecting only the triangles visible to a camera.
+	 * When a BVH node's bounding box is fully contained by the frustum, all triangles in that
+	 * subtree are collected without per-triangle intersection tests (CONTAINED optimization).
+	 *
+	 * The optional `frustumToBvh` matrix transforms the frustum into the BVH's local space (e.g.,
+	 * the inverse of a mesh's world matrix). If omitted, the frustum is assumed to already be in
+	 * the BVH's local space.
+	 *
+	 * When the BVH is built in indirect mode, returned indices are mapped through
+	 * `resolvePrimitiveIndex` to match the geometry's index buffer layout.
+	 *
+	 * @param {Frustum} frustum
+	 * @param {Matrix4} [frustumToBvh=null] - Optional transform of the frustum into the local
+	 *   space of this BVH.
+	 * @returns {Array<number>} Array of triangle indices inside the frustum.
+	 */
+	collectTrianglesInFrustum( frustum, frustumToBvh = null ) {
+
+		// Transform the frustum into BVH local space if a matrix is provided.
+		// Plane.applyMatrix4 transforms the plane by the given matrix, so if
+		// frustumToBvh maps from frustum-space to BVH-space the planes end up in BVH space.
+		let queryFrustum = frustum;
+		if ( frustumToBvh ) {
+
+			const planes = _collectFrustum.planes;
+			const srcPlanes = frustum.planes;
+			for ( let i = 0; i < 6; i ++ ) {
+
+				planes[ i ].copy( srcPlanes[ i ] ).applyMatrix4( frustumToBvh );
+
+			}
+
+			queryFrustum = _collectFrustum;
+
+		}
+
+		const result = [];
+		const resolveIndex = this.resolvePrimitiveIndex;
+		const geometry = this.geometry;
+		const indexAttr = geometry.index;
+		const posAttr = geometry.attributes.position;
+		const triangle = ExtendedTrianglePool.getPrimitive();
+
+		this.shapecast( {
+			intersectsBounds: nodeBox => {
+
+				if ( ! queryFrustum.intersectsBox( nodeBox ) ) return NOT_INTERSECTED;
+				if ( frustumContainsBox( queryFrustum, nodeBox ) ) return CONTAINED;
+				return INTERSECTED;
+
+			},
+			intersectsRange: ( offset, count, contained ) => {
+
+				if ( contained ) {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						result.push( resolveIndex( i ) );
+
+					}
+
+				} else {
+
+					for ( let i = offset, end = offset + count; i < end; i ++ ) {
+
+						const tri = resolveIndex( i );
+						setTriangle( triangle, tri * 3, indexAttr, posAttr );
+						triangle.needsUpdate = true;
+
+						// A triangle intersects the frustum unless all three vertices are
+						// on the negative side of at least one frustum plane (quick-reject).
+						const ta = triangle.a;
+						const tb = triangle.b;
+						const tc = triangle.c;
+						let allOutside = false;
+						const fPlanes = queryFrustum.planes;
+						for ( let p = 0; p < 6; p ++ ) {
+
+							const plane = fPlanes[ p ];
+							if ( plane.distanceToPoint( ta ) < 0 &&
+								plane.distanceToPoint( tb ) < 0 &&
+								plane.distanceToPoint( tc ) < 0 ) {
+
+								allOutside = true;
+								break;
+
+							}
+
+						}
+
+						if ( ! allOutside ) {
+
+							result.push( tri );
+
+						}
+
+					}
+
+				}
+
+				return false;
+
+			}
+		} );
+
+		ExtendedTrianglePool.releasePrimitive( triangle );
+		return result;
 
 	}
 
