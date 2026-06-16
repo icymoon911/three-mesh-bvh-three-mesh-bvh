@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GUI } from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import Stats from 'stats.js';
-import { BVHHelper, ObjectBVH, CONTAINED, INTERSECTED } from 'three-mesh-bvh';
+import { BVHHelper, ObjectBVH } from 'three-mesh-bvh';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
@@ -175,69 +175,50 @@ function updateVisibility() {
 	// Update camera
 	camera.updateMatrixWorld();
 
-	// Setup frustum
+	// Setup frustum in world space
 	const frustum = new THREE.Frustum();
 	const frustumMatrix = new THREE.Matrix4()
-		.multiplyMatrices( camera.projectionMatrix, camera.matrixWorldInverse )
-		.multiply( batchedMesh.matrixWorld );
+		.multiplyMatrices( camera.projectionMatrix, camera.matrixWorldInverse );
 	frustum.setFromProjectionMatrix( frustumMatrix, camera.coordinateSystem, camera.reversedDepth );
 
-	// BVH-accelerated frustum culling
-	const invMatrix = new THREE.Matrix4().copy( sceneBVH.matrixWorld ).invert();
-	const matrix = new THREE.Matrix4();
-	const sphere = new THREE.Sphere();
-	const point = new THREE.Vector3();
+	// Transform frustum into BVH local space
+	const frustumToBvh = new THREE.Matrix4().copy( sceneBVH.matrixWorld ).invert();
 
-	sceneBVH.shapecast( {
-		intersectsBounds: box => {
+	// BVH-accelerated frustum culling using the new collect method
+	const visibleObjects = sceneBVH.collectObjectsInFrustum( frustum, frustumToBvh );
 
-			if ( ! frustum.intersectsBox( box ) ) return;
+	if ( checkBoundingSphere ) {
 
-			// Check if fully contained
-			const { min, max } = box;
-			for ( let x = - 1; x <= 1; x += 2 ) {
+		// Optional sphere check for tighter culling
+		const invMatrix = new THREE.Matrix4().copy( sceneBVH.matrixWorld ).invert();
+		const matrix = new THREE.Matrix4();
+		const sphere = new THREE.Sphere();
 
-				for ( let y = - 1; y <= 1; y += 2 ) {
+		for ( const { object, instanceId } of visibleObjects ) {
 
-					for ( let z = - 1; z <= 1; z += 2 ) {
+			const geoId = object.getGeometryIdAt( instanceId );
+			object.getMatrixAt( instanceId, matrix );
+			matrix.premultiply( object.matrixWorld ).premultiply( invMatrix );
+			object.getBoundingSphereAt( geoId, sphere );
+			sphere.applyMatrix4( matrix );
 
-						point.set( x < 0 ? min.x : max.x, y < 0 ? min.y : max.y, z < 0 ? min.z : max.z );
-						if ( ! frustum.containsPoint( point ) ) return INTERSECTED;
-
-					}
-
-				}
-
-			}
-
-			return CONTAINED;
-
-		},
-		intersectsObject: ( object, instanceId ) => {
-
-			if ( checkBoundingSphere ) {
-
-				// Optional sphere check for tighter culling
-				const geoId = object.getGeometryIdAt( instanceId );
-				object.getMatrixAt( instanceId, matrix );
-				matrix.premultiply( object.matrixWorld ).premultiply( invMatrix );
-				object.getBoundingSphereAt( geoId, sphere );
-				sphere.applyMatrix4( matrix );
-
-				if ( frustum.intersectsSphere( sphere ) ) {
-
-					object.setVisibleAt( instanceId, true );
-
-				}
-
-			} else {
+			if ( frustum.intersectsSphere( sphere ) ) {
 
 				object.setVisibleAt( instanceId, true );
 
 			}
 
-		},
-	} );
+		}
+
+	} else {
+
+		for ( const { object, instanceId } of visibleObjects ) {
+
+			object.setVisibleAt( instanceId, true );
+
+		}
+
+	}
 
 }
 

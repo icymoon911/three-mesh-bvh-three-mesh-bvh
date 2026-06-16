@@ -308,7 +308,52 @@ export class ObjectBVH extends BVH {
 	): boolean;
 	raycast( raycaster: Raycaster, intersects?: Array<Intersection> ): Array<Intersection>;
 
+	collectObjectsInBox(
+		box: Box3,
+		boxToBvh: Matrix4,
+		options?: { includeHidden?: boolean },
+		results?: Array<CollectedObject>
+	): Array<CollectedObject>;
+
+	collectObjectsInSphere(
+		sphere: Sphere,
+		options?: { includeHidden?: boolean },
+		results?: Array<CollectedObject>
+	): Array<CollectedObject>;
+
+	collectObjectsInFrustum(
+		frustum: Frustum,
+		frustumToBvh?: Matrix4 | null,
+		options?: { includeHidden?: boolean },
+		results?: Array<CollectedObject>
+	): Array<CollectedObject>;
+
+	collectObjectsInShapes(
+		shapes: Array<ShapeDescriptor>,
+		options?: { includeHidden?: boolean },
+		results?: Array<CollectedObjectWithShape>
+	): Array<CollectedObjectWithShape>;
+
 }
+
+export interface CollectedObject {
+
+	object: Object3D;
+	instanceId: number;
+	contained: boolean;
+
+}
+
+export interface CollectedObjectWithShape extends CollectedObject {
+
+	shapeIndex: number;
+
+}
+
+export type ShapeDescriptor =
+	| { type: 'box'; box: Box3; boxToBvh: Matrix4 }
+	| { type: 'sphere'; sphere: Sphere }
+	| { type: 'frustum'; frustum: Frustum; frustumToBvh?: Matrix4 };
 
 // SerializedBVH
 export class SerializedBVH {
